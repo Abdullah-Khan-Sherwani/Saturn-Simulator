@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>The General's Desk</title>
+  <style>
+    * { margin: 0; padding: 0; }
+    body { background: #000; overflow: hidden; }
+    canvas { display: block; }
+    #loading {
+      position: fixed; inset: 0; display: flex;
+      align-items: center; justify-content: center;
+      color: #ccc; font-family: monospace; font-size: 1.2rem;
+      background: #000; z-index: 10;
+    }
+    #saturn-link {
+      position: fixed; top: 1rem; right: 1rem; z-index: 20;
+      padding: .45rem .9rem; border: 1px solid #446;
+      background: rgba(5, 10, 30, .8); color: #9cf;
+      font-family: monospace; font-size: .8rem;
+      text-decoration: none; border-radius: 4px;
+      backdrop-filter: blur(6px);
+    }
+    #saturn-link:hover { background: rgba(20, 40, 100, .9); }
+  </style>
+</head>
+<body>
+  <div id="loading">Loading assets…</div>
+  <a id="saturn-link" href="/saturn.html">Saturn Scene →</a>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

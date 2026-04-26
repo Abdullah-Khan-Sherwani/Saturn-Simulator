@@ -1,0 +1,11 @@
+Model Information:
+* title:	(PzKpfw VI) Tiger 1
+* source:	https://sketchfab.com/3d-models/pzkpfw-vi-tiger-1-dfd7156c43124d1c9ff77d895c647142
+* author:	Tinus (https://sketchfab.com/HeerBeer)
+
+Model License:
+* license type:	CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)
+* requirements:	Author must be credited. No commercial use.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "(PzKpfw VI) Tiger 1" (https://sketchfab.com/3d-models/pzkpfw-vi-tiger-1-dfd7156c43124d1c9ff77d895c647142) by Tinus (https://sketchfab.com/HeerBeer) licensed under CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)

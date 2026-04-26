@@ -1,0 +1,677 @@
+{
+  "accessors": [
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 21492,
+      "max": [
+        0.39909011125564575,
+        0.8823442459106445,
+        0.5878927111625671
+      ],
+      "min": [
+        -0.39909008145332336,
+        -0.48912110924720764,
+        0.0006439446588046849
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 257904,
+      "componentType": 5126,
+      "count": 21492,
+      "max": [
+        1.0,
+        0.9999940395355225,
+        0.999994158744812
+      ],
+      "min": [
+        -1.0,
+        -0.999994158744812,
+        -0.999993622303009
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 21492,
+      "max": [
+        0.9999997615814209,
+        1.0,
+        0.9999999403953552,
+        1.0
+      ],
+      "min": [
+        -0.9999997615814209,
+        -0.9999997615814209,
+        -0.9999988675117493,
+        -1.0
+      ],
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 21492,
+      "max": [
+        0.9871389865875244,
+        3.8681631088256836
+      ],
+      "min": [
+        -0.008679999969899654,
+        -1.7955900430679321
+      ],
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 0,
+      "componentType": 5125,
+      "count": 42000,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 515808,
+      "componentType": 5126,
+      "count": 42951,
+      "max": [
+        0.4221065938472748,
+        0.9519681334495544,
+        0.9058741927146912
+      ],
+      "min": [
+        -0.434349924325943,
+        -0.48315665125846863,
+        -0.0020465762354433537
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 1031220,
+      "componentType": 5126,
+      "count": 42951,
+      "max": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "min": [
+        -1.0,
+        -1.0,
+        -1.0
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 3,
+      "byteOffset": 343872,
+      "componentType": 5126,
+      "count": 42951,
+      "max": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "min": [
+        -1.0,
+        -1.0,
+        -1.0,
+        -1.0
+      ],
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 1,
+      "byteOffset": 171936,
+      "componentType": 5126,
+      "count": 42951,
+      "max": [
+        1.3401579856872559,
+        0.9966199994087219
+      ],
+      "min": [
+        0.0039059999398887157,
+        0.007763000205159187
+      ],
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 0,
+      "byteOffset": 168000,
+      "componentType": 5125,
+      "count": 105156,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 1546632,
+      "componentType": 5126,
+      "count": 6357,
+      "max": [
+        0.3689720034599304,
+        0.8486989140510559,
+        0.44160759449005127
+      ],
+      "min": [
+        -0.35806915163993835,
+        -0.5013808012008667,
+        0.13046906888484955
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 1622916,
+      "componentType": 5126,
+      "count": 6357,
+      "max": [
+        1.0,
+        0.9992272257804871,
+        1.0
+      ],
+      "min": [
+        -1.0,
+        -0.9991888999938965,
+        -1.0
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 3,
+      "byteOffset": 1031088,
+      "componentType": 5126,
+      "count": 6357,
+      "max": [
+        0.999981701374054,
+        1.0,
+        0.9982818365097046,
+        1.0
+      ],
+      "min": [
+        -0.999981701374054,
+        -0.9999997615814209,
+        -0.99935382604599,
+        -1.0
+      ],
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 1,
+      "byteOffset": 515544,
+      "componentType": 5126,
+      "count": 6357,
+      "max": [
+        0.9900869727134705,
+        0.9923949837684631
+      ],
+      "min": [
+        0.0039059999398887157,
+        0.0039059999398887157
+      ],
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 0,
+      "byteOffset": 588624,
+      "componentType": 5125,
+      "count": 17784,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 1699200,
+      "componentType": 5126,
+      "count": 11319,
+      "max": [
+        0.3054496645927429,
+        0.35774993896484375,
+        0.26039788126945496
+      ],
+      "min": [
+        -0.3053690195083618,
+        -1.217630386352539,
+        -3.680546001305629e-08
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 1835028,
+      "componentType": 5126,
+      "count": 11319,
+      "max": [
+        0.9999977946281433,
+        0.9999723434448242,
+        1.0
+      ],
+      "min": [
+        -0.9999974370002747,
+        -0.9999566674232483,
+        -1.0
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 3,
+      "byteOffset": 1132800,
+      "componentType": 5126,
+      "count": 11319,
+      "max": [
+        1.0,
+        0.999995231628418,
+        1.0,
+        1.0
+      ],
+      "min": [
+        -1.0,
+        -0.9999996423721313,
+        -1.0,
+        -1.0
+      ],
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 1,
+      "byteOffset": 566400,
+      "componentType": 5126,
+      "count": 11319,
+      "max": [
+        0.9960939884185791,
+        0.9430609941482544
+      ],
+      "min": [
+        0.0,
+        0.0
+      ],
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 0,
+      "byteOffset": 659760,
+      "componentType": 5125,
+      "count": 29874,
+      "type": "SCALAR"
+    }
+  ],
+  "asset": {
+    "extras": {
+      "author": "Tinus (https://sketchfab.com/HeerBeer)",
+      "license": "CC-BY-NC-4.0 (http://creativecommons.org/licenses/by-nc/4.0/)",
+      "source": "https://sketchfab.com/3d-models/pzkpfw-vi-tiger-1-dfd7156c43124d1c9ff77d895c647142",
+      "title": "(PzKpfw VI) Tiger 1"
+    },
+    "generator": "Sketchfab-12.68.0",
+    "version": "2.0"
+  },
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 779256,
+      "name": "floatBufferViews",
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 656952,
+      "byteOffset": 779256,
+      "byteStride": 8,
+      "name": "floatBufferViews",
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 1970856,
+      "byteOffset": 1436208,
+      "byteStride": 12,
+      "name": "floatBufferViews",
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 1313904,
+      "byteOffset": 3407064,
+      "byteStride": 16,
+      "name": "floatBufferViews",
+      "target": 34962
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 4720968,
+      "uri": "scene.bin"
+    }
+  ],
+  "images": [
+    {
+      "uri": "textures/tracks_baseColor.png"
+    },
+    {
+      "uri": "textures/tracks_metallicRoughness.png"
+    },
+    {
+      "uri": "textures/tracks_normal.png"
+    },
+    {
+      "uri": "textures/hull_baseColor.png"
+    },
+    {
+      "uri": "textures/hull_metallicRoughness.png"
+    },
+    {
+      "uri": "textures/hull_normal.png"
+    },
+    {
+      "uri": "textures/turret_baseColor.png"
+    },
+    {
+      "uri": "textures/turret_metallicRoughness.png"
+    },
+    {
+      "uri": "textures/turret_normal.png"
+    }
+  ],
+  "materials": [
+    {
+      "doubleSided": true,
+      "name": "tracks",
+      "normalTexture": {
+        "index": 2
+      },
+      "occlusionTexture": {
+        "index": 1
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicRoughnessTexture": {
+          "index": 1
+        }
+      }
+    },
+    {
+      "doubleSided": true,
+      "name": "hull",
+      "normalTexture": {
+        "index": 5
+      },
+      "occlusionTexture": {
+        "index": 4
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 3
+        },
+        "metallicRoughnessTexture": {
+          "index": 4
+        }
+      }
+    },
+    {
+      "doubleSided": true,
+      "name": "turret",
+      "normalTexture": {
+        "index": 8
+      },
+      "occlusionTexture": {
+        "index": 7
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 6
+        },
+        "metallicRoughnessTexture": {
+          "index": 7
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "tiger_hull_tracks_0",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 1,
+            "POSITION": 0,
+            "TANGENT": 2,
+            "TEXCOORD_0": 3
+          },
+          "indices": 4,
+          "material": 0,
+          "mode": 4
+        }
+      ]
+    },
+    {
+      "name": "tiger_hull_hull_0",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 6,
+            "POSITION": 5,
+            "TANGENT": 7,
+            "TEXCOORD_0": 8
+          },
+          "indices": 9,
+          "material": 1,
+          "mode": 4
+        }
+      ]
+    },
+    {
+      "name": "tiger_hull_turret_0",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 11,
+            "POSITION": 10,
+            "TANGENT": 12,
+            "TEXCOORD_0": 13
+          },
+          "indices": 14,
+          "material": 2,
+          "mode": 4
+        }
+      ]
+    },
+    {
+      "name": "tiger_turret_turret_0",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 16,
+            "POSITION": 15,
+            "TANGENT": 17,
+            "TEXCOORD_0": 18
+          },
+          "indices": 19,
+          "material": 2,
+          "mode": 4
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "children": [
+        1
+      ],
+      "matrix": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        3.828568672208042e-16,
+        -1.0,
+        0.0,
+        0.0,
+        1.0,
+        3.828568672208042e-16,
+        0.0,
+        0.0,
+        -6.352824925362513e-09,
+        -0.03338738903403282,
+        1.0
+      ],
+      "name": "Sketchfab_model"
+    },
+    {
+      "children": [
+        2
+      ],
+      "matrix": [
+        0.009999999776482582,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.009999999776482582,
+        0.0,
+        0.0,
+        -0.009999999776482582,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "c6971b3519f14f0696ce317e2353edc0.fbx"
+    },
+    {
+      "children": [
+        3
+      ],
+      "name": "RootNode"
+    },
+    {
+      "children": [
+        4,
+        5,
+        6,
+        7
+      ],
+      "matrix": [
+        434.2392883300781,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        -7.07465598733617e-05,
+        -434.2392883300724,
+        0.0,
+        0.0,
+        434.2392883300724,
+        -7.07465598733617e-05,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "tiger_hull"
+    },
+    {
+      "mesh": 0,
+      "name": "tiger_hull_tracks_0"
+    },
+    {
+      "mesh": 1,
+      "name": "tiger_hull_hull_0"
+    },
+    {
+      "mesh": 2,
+      "name": "tiger_hull_turret_0"
+    },
+    {
+      "children": [
+        8
+      ],
+      "matrix": [
+        0.9976453008735956,
+        0.06858377676642521,
+        -8.175823974569695e-09,
+        0.0,
+        -0.06858377676642571,
+        0.9976453008735886,
+        -1.1892859676517654e-07,
+        0.0,
+        3.731201220314414e-17,
+        1.1920927748319421e-07,
+        0.9999998211860586,
+        0.0,
+        -6.406009197235107e-05,
+        0.23141616582870483,
+        0.42288458347320557,
+        1.0
+      ],
+      "name": "tiger_turret"
+    },
+    {
+      "mesh": 3,
+      "name": "tiger_turret_turret_0"
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Sketchfab_Scene",
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "sampler": 0,
+      "source": 0
+    },
+    {
+      "sampler": 0,
+      "source": 1
+    },
+    {
+      "sampler": 0,
+      "source": 2
+    },
+    {
+      "sampler": 0,
+      "source": 3
+    },
+    {
+      "sampler": 0,
+      "source": 4
+    },
+    {
+      "sampler": 0,
+      "source": 5
+    },
+    {
+      "sampler": 0,
+      "source": 6
+    },
+    {
+      "sampler": 0,
+      "source": 7
+    },
+    {
+      "sampler": 0,
+      "source": 8
+    }
+  ]
+}

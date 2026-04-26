@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tiger Tank — Sunset Patrol · WebGL 2.0</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0608; }
+    canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+    canvas:active { cursor: grabbing; }
+
+    #loading {
+      position: fixed; inset: 0; display: grid; place-items: center;
+      background: #0a0608; z-index: 10; color: #e8903a;
+      font-family: 'Courier New', monospace; font-size: .95rem;
+    }
+    #loading-inner { display: grid; place-items: center; gap: .9rem; }
+    .ring {
+      width: 44px; height: 44px; border-radius: 50%;
+      border: 3px solid #2a1505; border-top-color: #e8903a;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #log-box {
+      margin-top: .5rem; width: 420px; max-height: 180px; overflow-y: auto;
+      background: #12080a; border: 1px solid #3a1505; border-radius: 4px;
+      padding: .5rem .75rem; font-size: .75rem; line-height: 1.6;
+    }
+    .ll { color: #6cf090; }
+    .le { color: #f04040; }
+
+    #back {
+      position: fixed; top: 1rem; left: 1rem; z-index: 20;
+      padding: .45rem .9rem; border: 1px solid #7a3010;
+      background: rgba(10, 6, 8, .82); color: #e8903a;
+      font-family: 'Courier New', monospace; font-size: .78rem;
+      text-decoration: none; border-radius: 5px;
+      backdrop-filter: blur(6px); transition: background .2s;
+    }
+    #back:hover { background: rgba(60, 20, 5, .92); }
+
+    #back2 {
+      position: fixed; top: 1rem; left: 9rem; z-index: 20;
+      padding: .45rem .9rem; border: 1px solid #7a3010;
+      background: rgba(10, 6, 8, .82); color: #e8903a;
+      font-family: 'Courier New', monospace; font-size: .78rem;
+      text-decoration: none; border-radius: 5px;
+      backdrop-filter: blur(6px); transition: background .2s;
+    }
+    #back2:hover { background: rgba(60, 20, 5, .92); }
+
+    #hud {
+      position: fixed; bottom: 1rem; right: 1rem; z-index: 20;
+      color: rgba(220, 140, 60, .45); font-family: 'Courier New', monospace;
+      font-size: .7rem; line-height: 1.7; text-align: right;
+      pointer-events: none; letter-spacing: .04em;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="loading">
+    <div id="loading-inner">
+      <div class="ring"></div>
+      <span id="msg">Initialising WebGL 2.0…</span>
+      <div id="log-box"></div>
+    </div>
+  </div>
+
+  <canvas id="c"></canvas>
+
+  <a id="back"  href="/">← General's Desk</a>
+  <a id="back2" href="/saturn.html">← Saturn</a>
+
+  <div id="hud">
+    TIGER I — SUNSET PATROL<br>
+    Pure WebGL 2.0 · Normal Mapping · IBL<br>
+    Equirectangular Cubemap · Phong + Reflection<br>
+    <span style="opacity:.6">drag to orbit · scroll to zoom</span>
+  </div>
+
+  <script type="module" src="/src/tiger.js"></script>
+</body>
+</html>
