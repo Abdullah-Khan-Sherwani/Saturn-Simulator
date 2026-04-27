@@ -60,6 +60,10 @@ export function glTex2D(gl, image) {
   gl.generateMipmap(gl.TEXTURE_2D);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  /* Anisotropic filtering — reduces mip-level shimmer on oblique surfaces (rings) */
+  const ext = gl.getExtension('EXT_texture_filter_anisotropic');
+  if (ext) gl.texParameterf(gl.TEXTURE_2D, ext.TEXTURE_MAX_ANISOTROPY_EXT,
+    Math.min(16, gl.getParameter(ext.MAX_TEXTURE_MAX_ANISOTROPY_EXT)));
   return t;
 }
 
@@ -117,6 +121,16 @@ export function freeRenderTarget(gl, rt) {
   if (rt.depth) gl.deleteRenderbuffer(rt.depth);
   if (rt.tex)   gl.deleteTexture(rt.tex);
   if (rt.fbo)   gl.deleteFramebuffer(rt.fbo);
+}
+
+export function cacheUniforms(gl, prog, keys) {
+  return Object.fromEntries(keys.map(k => [k, gl.getUniformLocation(prog, k)]));
+}
+
+export function bindTex(gl, unit, type, tex, loc, slot) {
+  gl.activeTexture(unit);
+  gl.bindTexture(type, tex);
+  gl.uniform1i(loc, slot);
 }
 
 export function drawVAO(gl, g) {

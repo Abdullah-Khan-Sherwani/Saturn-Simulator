@@ -30,6 +30,7 @@ class KHRPbrSGPlugin {
       materialParams.opacity = a;
       if (a < 1) materialParams.transparent = true;
     }
+    materialParams.userData = { isKHRSG: true };
     if (ext.diffuseTexture != null)
       pending.push(this.parser.loadTexture(ext.diffuseTexture.index)
         .then(tex => { materialParams.map = tex; }));
@@ -74,7 +75,9 @@ export function extractMeshes(gltf) {
       if (t?.image) { image = t.image; uvRepeat = [t.repeat.x, t.repeat.y]; uvOffset = [t.offset.x, t.offset.y]; break; }
     }
 
-    const specImage = mat.roughnessMap?.image ?? null;
+    /* Only treat roughnessMap as a spec/gloss texture if KHRPbrSGPlugin set it.
+       Standard PBR roughnessMap contains metallic-roughness data, not specular/gloss. */
+    const specImage = mat.userData?.isKHRSG && mat.roughnessMap?.image ? mat.roughnessMap.image : null;
     meshes.push({ name: (node.name || '').toLowerCase(), pos, norm, uv, idx, idxType, color, opacity, image, specImage, uvRepeat, uvOffset });
   });
   return meshes;
