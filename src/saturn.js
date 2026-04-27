@@ -163,19 +163,22 @@ async function main() {
       const ring = isRing(m);
 
       gl.uniform1f (U.u_Alpha,       ring ? 1.0 : m.opacity);
-      gl.uniform1f (U.u_AlphaCutoff, ring ? 0.18 : 0.0);
+      gl.uniform1f (U.u_AlphaCutoff, 0.0);
       gl.uniform2fv(U.u_UVRepeat,    m.uvRepeat ?? [1, 1]);
       gl.uniform2fv(U.u_UVOffset,    m.uvOffset ?? [0, 0]);
       gl.uniform1f (U.u_EnvStr,      ring ? 0.005 : envStrength);
 
       /* Rings are two-sided — normals inconsistent in GLB, cull face inverts lighting.
-         Polygon offset prevents z-fighting between the 49 coplanar ring segments. */
+         Polygon offset prevents z-fighting between the 49 coplanar ring segments.
+         Rings need alpha blending; depthMask false avoids self-depth writes. */
       gl.disable(gl.CULL_FACE);
       if (ring) {
-        gl.disable(gl.BLEND);
+        gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.depthMask(false);
         gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1.0, 1.0);
       } else {
-        gl.enable(gl.BLEND);
+        gl.disable(gl.BLEND);
+        gl.depthMask(true);
         gl.disable(gl.POLYGON_OFFSET_FILL);
       }
 
@@ -262,6 +265,7 @@ async function main() {
     mat4.translate(satM, satM, [-sB.cx, -sB.cy, -sB.cz]);
     gl.uniform1f(U.u_Shin, 20.0); gl.uniform1f(U.u_SpecK, 0.10);
     renderGroup(satGPU, satMeshes, satTex, satSpecTex, satM, 0.02);
+    gl.depthMask(true);
 
     const encM = mat4.create();
     mat4.rotateY (encM, encM, t * 0.70);
