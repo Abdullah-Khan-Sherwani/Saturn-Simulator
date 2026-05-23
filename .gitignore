@@ -1,40 +1,38 @@
-# Dependencies
+# Dependencies & build
 node_modules/
-
-# Build outputs
 dist/
 
-# Python virtual environment
+# Python
 .venv/
 __pycache__/
 *.py[cod]
 
-# IDE/editor
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# IDE / OS
 .vscode/
 .idea/
-
-# Logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# OS artifacts
 .DS_Store
 Thumbs.db
 
-# Assets not used by the project code
-Assets/saturn.glb
-Assets/saturn.glb.zip
-Assets/starmap_2020_8k.exr
-Assets/starmap_2020_8k.exr.zip
-Assets/8k_saturn_ring_alpha.png
+# Non-Saturn assets (large files not used by the scene)
 Assets/antique_military_compass_usaf_ww2_era.glb
 Assets/mauser_c96_the_redeemer.glb
 Assets/pzkpfw_vi_tiger_1.glb
 Assets/rural_evening_road_4k.png
 Assets/unfinished_office_4k.exr
-Assets/usgs_topographic_map.glb
+Assets/starmap_2020_8k.exr
 Assets/scene.bin
 Assets/scene.gltf
 Assets/license.txt
 Assets/textures/
+
+# Assets too big
+Assets/saturn.glb
