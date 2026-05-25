@@ -41,9 +41,9 @@ async function main() {
   // Strip bundled moons (Mimas, Enceladus) from saturn.glb — wrong scale/position for our scene
   const satMeshes = extractMeshes(satGLTF).filter(m => !/(mimas|enceladus)/.test(m.name));
   const encMeshes = extractMeshes(encGLTF);
-  satGLTF.scene.clear(); encGLTF.scene.clear();
   if (!satMeshes.length) throw new Error('No meshes in saturn.glb');
   if (!encMeshes.length) throw new Error('No meshes in enceladus.glb');
+
 
   /* ── Programs ──────────────────────────────────────────────────────────── */
   const skyProg    = mkProg(gl, SKYBOX_VS,  SKYBOX_FS);
@@ -96,13 +96,12 @@ async function main() {
   const spaceCubemap = glTexCubeFromImages(gl, await loadCubemapFaces('/cubemap_starmap_2020_1024'));
   const sunGPU = makeVAO(gl, sunProg, makeUvSphere(1.0, 24, 48));
 
-  const sB = boundsOf(satMeshes[0].pos);
+  const satBodyMesh   = satMeshes.find(m => !isRing(m)) ?? satMeshes[0];
   const eB = boundsOf(encMeshes[0].pos);
+  const sB = boundsOf(satBodyMesh.pos);
   const sS = 3.2  / sB.r;
   const eS = 0.42 / eB.r;
-
-  const satBodyMesh   = satMeshes.find(m => !isRing(m)) ?? satMeshes[0];
-  const satBodyRadius = sS * boundsOf(satBodyMesh.pos).r;
+  const satBodyRadius = sS * sB.r;
 
   const SUN_DIR = vec3.normalize(vec3.create(), SUN_DIR_RAW);
   const SUN_POS = vec3.scale(vec3.create(), SUN_DIR, 4000.0);
@@ -158,19 +157,13 @@ async function main() {
     gl.uniformMatrix4fv(U.u_M,   false, modelMat);
     gl.uniformMatrix3fv(U.u_N,   false, mat3.normalFromMat4(mat3.create(), modelMat));
 
-    gpuList.forEach((g, i) => {
-      const m = meshList[i], tex = texList[i], specTex = specTexList[i];
-      const ring = isRing(m);
-
+    const drawMesh = (g, m, tex, specTex, ring) => {
       gl.uniform1f (U.u_Alpha,       ring ? 1.0 : m.opacity);
       gl.uniform1f (U.u_AlphaCutoff, 0.0);
       gl.uniform2fv(U.u_UVRepeat,    m.uvRepeat ?? [1, 1]);
       gl.uniform2fv(U.u_UVOffset,    m.uvOffset ?? [0, 0]);
       gl.uniform1f (U.u_EnvStr,      ring ? 0.005 : envStrength);
 
-      /* Rings are two-sided — normals inconsistent in GLB, cull face inverts lighting.
-         Polygon offset prevents z-fighting between the 49 coplanar ring segments.
-         Rings need alpha blending; depthMask false avoids self-depth writes. */
       gl.disable(gl.CULL_FACE);
       if (ring) {
         gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -189,16 +182,21 @@ async function main() {
         gl.uniform3fv(U.u_Base, m.color); gl.uniform1i(U.u_TexOn, 0);
       }
 
-      if (specTex && !ring) {
+      if (specTex) {
         bindTex(gl, gl.TEXTURE2, gl.TEXTURE_2D, specTex, U.u_SpecTex, 2);
         gl.uniform1i(U.u_SpecTexOn, 1);
       } else {
         gl.uniform1i(U.u_SpecTexOn, 0);
-        if (ring) { gl.uniform1f(U.u_Shin, 2.0); gl.uniform1f(U.u_SpecK, 0.005); }
+        if (ring) { gl.uniform1f(U.u_Shin, 8.0); gl.uniform1f(U.u_SpecK, 0.05); }
       }
 
       drawVAO(gl, g);
-    });
+    };
+
+    /* Body meshes first — writes depth so rings behind planet are correctly clipped. */
+    gpuList.forEach((g, i) => { if (!isRing(meshList[i])) drawMesh(g, meshList[i], texList[i], specTexList[i], false); });
+    /* Ring meshes second — depth-tested against body, no depth write, alpha blended. */
+    gpuList.forEach((g, i) => { if ( isRing(meshList[i])) drawMesh(g, meshList[i], texList[i], specTexList[i], true);  });
   }
 
   /* ── Render loop ───────────────────────────────────────────────────────── */

@@ -1,13 +1,34 @@
-# Dependencies & build
+# ── Dependencies & build output ───────────────────────────────────────────────
 node_modules/
 dist/
 
-# Python
-.venv/
-__pycache__/
-*.py[cod]
+# ── Large / unused binary assets ──────────────────────────────────────────────
+# Main planet model (143 MB — exceeds GitHub 100 MB hard limit)
+Assets/saturn.glb
+Assets/saturn.glb.zip
 
-# LaTeX build artifacts
+# Unused scene assets from earlier experiments
+Assets/pzkpfw_vi_tiger_1.glb
+Assets/mauser_c96_the_redeemer.glb
+Assets/antique_military_compass_usaf_ww2_era.glb
+Assets/usgs_topographic_map.glb
+Assets/rural_evening_road_4k.png
+Assets/unfinished_office_4k.exr
+Assets/starmap_2020_8k.exr
+Assets/starmap_2020_8k.exr.zip
+Assets/scene.bin
+Assets/scene.gltf
+Assets/license.txt
+Assets/textures/
+
+# ── Compiled / generated files ────────────────────────────────────────────────
+Docs/*.pdf
+
+# ── Temporary / scratch screenshots ──────────────────────────────────────────
+image.png
+Assets/Reference Pictures/Screenshot*.png
+
+# ── LaTeX build artifacts ──────────────────────────────────────────────────────
 *.aux
 *.log
 *.out
@@ -16,23 +37,9 @@ __pycache__/
 *.fls
 *.fdb_latexmk
 
-# IDE / OS
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
-
-# Non-Saturn assets (large files not used by the scene)
-Assets/antique_military_compass_usaf_ww2_era.glb
-Assets/mauser_c96_the_redeemer.glb
-Assets/pzkpfw_vi_tiger_1.glb
-Assets/rural_evening_road_4k.png
-Assets/unfinished_office_4k.exr
-Assets/starmap_2020_8k.exr
-Assets/scene.bin
-Assets/scene.gltf
-Assets/license.txt
-Assets/textures/
-
-# Assets too big
-Assets/saturn.glb
+desktop.ini

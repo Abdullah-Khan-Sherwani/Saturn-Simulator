@@ -8,8 +8,7 @@
     "build": "vite build"
   },
   "dependencies": {
-    "gl-matrix": "^3.4.4",
-    "three": "^0.168.0"
+    "gl-matrix": "^3.4.4"
   },
   "devDependencies": {
     "vite": "^5.4.0"
