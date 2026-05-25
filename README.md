@@ -58,12 +58,15 @@ Saturn Simulator renders Saturn and its orbiting moon Enceladus in real time usi
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) 18 or later
-- A browser with WebGL 2.0 support (Chrome, Firefox, Edge — all current versions)
+| Requirement | Version | Notes |
+|-------------|---------|-------|
+| [Node.js](https://nodejs.org/) | 18 + | `node -v` to check |
+| npm | bundled with Node | `npm -v` to check |
+| Browser | any current | Chrome / Firefox / Edge all support WebGL 2.0 |
 
-> **Asset note:** `saturn.glb` (143 MB) exceeds GitHub's file size limit and is not tracked in this repository. Place your own copy at `Assets/saturn.glb` before running. `enceladus.glb` is included.
+---
 
-### Install
+### Step 1 — Clone and install dependencies
 
 ```bash
 git clone https://github.com/Abdullah-Khan-Sherwani/Saturn-Simulator.git
@@ -71,29 +74,104 @@ cd Saturn-Simulator
 npm install
 ```
 
-### Run (development)
+---
+
+### Step 2 — Asset setup
+
+The table below lists every file the app loads at runtime, which ones are already in the repo, and what you need to provide.
+
+| File | Served at | Included in repo | Size | Action needed |
+|------|-----------|:----------------:|------|---------------|
+| `Assets/saturn.glb` | `/saturn.glb` | ❌ | ~143 MB | **Must add manually — see below** |
+| `Assets/enceladus.glb` | `/enceladus.glb` | ✅ | 3.5 MB | Nothing |
+| `Assets/8k_saturn.jpg` | `/8k_saturn.jpg` | ✅ | — | Nothing |
+| `Assets/8k_saturn_ring_alpha.png` | `/8k_saturn_ring_alpha.png` | ✅ | — | Nothing |
+| `Assets/8k_sun.jpg` | `/8k_sun.jpg` | ✅ | — | Nothing |
+| `Assets/cubemap_starmap_2020_1024/px.png` … `nz.png` | `/cubemap_starmap_2020_1024/` | ✅ | 6 files | Nothing |
+
+> Vite's `publicDir` is set to `Assets/`, so every file in `Assets/` is served at the URL root automatically — no import statements needed.
+
+#### Obtaining `saturn.glb`
+
+`saturn.glb` exceeds GitHub's 100 MB hard limit and is therefore not tracked. You have three options depending on what you already have locally:
+
+**Option A — You have `Assets/saturn_model_new/saturn.glb` on disk (copy it):**
+
+```bash
+# Windows
+copy "Assets\saturn_model_new\saturn.glb" "Assets\saturn.glb"
+
+# macOS / Linux
+cp Assets/saturn_model_new/saturn.glb Assets/saturn.glb
+```
+
+**Option B — You have `Assets/saturn.glb.zip` on disk (extract it):**
+
+```bash
+# Windows (PowerShell)
+Expand-Archive -Path "Assets\saturn.glb.zip" -DestinationPath "Assets\" -Force
+# Then rename the extracted file to saturn.glb if needed
+
+# macOS / Linux
+unzip Assets/saturn.glb.zip -d Assets/
+```
+
+**Option C — Fresh download from Sketchfab:**
+
+1. Download the Saturn with rings model (CC-BY) from [Sketchfab](https://sketchfab.com)
+2. Export / download as **GLB**
+3. Place the file at `Assets/saturn.glb`
+
+After any of the three options, confirm the file is in place:
+
+```bash
+# Should print the file path
+ls Assets/saturn.glb        # macOS / Linux
+dir Assets\saturn.glb       # Windows
+```
+
+---
+
+### Step 3 — Run the development server
 
 ```bash
 npm run dev
 ```
 
-The dev server starts on `http://localhost:5173` and automatically opens the scene at:
+Vite starts on port `5173` and automatically opens:
 
 ```
 http://localhost:5173/saturn
 ```
 
-### Build (production)
+**What you will see on load:**
+
+```
+Initialising…           ← WebGL context + shader compilation
+Saturn: X.X / 143 MB   ← GLB streaming progress
+Enceladus: X.X / 4 MB  ← GLB streaming progress
+Building GPU buffers…   ← VAO / VBO upload
+                        ← Loading overlay disappears → scene renders
+```
+
+If you see a red error message instead, check the browser console (`F12`) — the most common cause is a missing or mis-named `saturn.glb`.
+
+---
+
+### Step 4 — Production build (optional)
 
 ```bash
 npm run build
 ```
 
-Output is written to `dist/`. Serve with any static file server:
+Output is written to `dist/`. Serve locally with:
 
 ```bash
 npx serve dist
+# open http://localhost:3000/saturn
 ```
+
+Or deploy the `dist/` folder to any static host (Vercel, Netlify, GitHub Pages, etc.).
 
 ---
 
