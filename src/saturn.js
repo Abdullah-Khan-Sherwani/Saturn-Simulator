@@ -79,6 +79,16 @@ async function main() {
   const encTex     = encMeshes.map(m => m.image    ? glTex2D(gl, m.image)     : null);
   const encSpecTex = encMeshes.map(m => m.specImage ? glTex2D(gl, m.specImage) : null);
 
+  /* Pre-split Saturn into body-only and ring-only lists so the render loop can
+     draw all opaques before any transparent rings, keeping Enceladus correctly
+     depth-sorted against the rings regardless of camera angle. */
+  const satBodyIdx  = satMeshes.map((_, i) => i).filter(i => !isRing(satMeshes[i]));
+  const satRingIdx  = satMeshes.map((_, i) => i).filter(i =>  isRing(satMeshes[i]));
+  const satBodyGPU   = satBodyIdx.map(i => satGPU[i]),     satRingGPU   = satRingIdx.map(i => satGPU[i]);
+  const satBodyMeshes = satBodyIdx.map(i => satMeshes[i]), satRingMeshes = satRingIdx.map(i => satMeshes[i]);
+  const satBdyTex    = satBodyIdx.map(i => satTex[i]),     satRingTex   = satRingIdx.map(i => satTex[i]);
+  const satBodySpec  = satBodyIdx.map(i => satSpecTex[i]), satRingSpec  = satRingIdx.map(i => satSpecTex[i]);
+
   /* ── Uniform locations ─────────────────────────────────────────────────── */
   const U = cacheUniforms(gl, planetProg, [
     'u_MVP','u_M','u_N','u_LDir','u_LCol','u_Base','u_Cam',
@@ -254,16 +264,11 @@ async function main() {
     gl.uniform3fv(U.u_FogColor, new Float32Array([0, 0, 0.018]));
     bindTex(gl, gl.TEXTURE1, gl.TEXTURE_CUBE_MAP, spaceCubemap, U.u_EnvMap, 1);
 
-    gl.uniform3fv(U.u_OccluderCenter, encWorld); gl.uniform1f(U.u_OccluderR, 0.42);
-
     const satM = mat4.create();
     mat4.rotateZ (satM, satM, 26.7 * Math.PI / 180);
     mat4.rotateY (satM, satM, t * 0.15);
     mat4.scale   (satM, satM, [sS, sS, sS]);
     mat4.translate(satM, satM, [-sB.cx, -sB.cy, -sB.cz]);
-    gl.uniform1f(U.u_Shin, 20.0); gl.uniform1f(U.u_SpecK, 0.10);
-    renderGroup(satGPU, satMeshes, satTex, satSpecTex, satM, 0.02);
-    gl.depthMask(true);
 
     const encM = mat4.create();
     mat4.rotateY (encM, encM, t * 0.70);
@@ -272,9 +277,26 @@ async function main() {
     mat4.rotateY (encM, encM, t * 2.2);
     mat4.scale   (encM, encM, [eS, eS, eS]);
     mat4.translate(encM, encM, [-eB.cx, -eB.cy, -eB.cz]);
+
+    /* Draw order: all opaques first (write depth), rings last (read depth only).
+       Enceladus depth lands in the buffer before rings are drawn, so the rings
+       correctly occlude Enceladus when it is behind them. */
+
+    /* 1. Saturn body — opaque */
+    gl.uniform1f(U.u_Shin, 20.0); gl.uniform1f(U.u_SpecK, 0.10);
+    gl.uniform3fv(U.u_OccluderCenter, encWorld); gl.uniform1f(U.u_OccluderR, 0.42);
+    renderGroup(satBodyGPU, satBodyMeshes, satBdyTex, satBodySpec, satM, 0.02);
+
+    /* 2. Enceladus — opaque, depth written before rings are drawn */
     gl.uniform1f(U.u_Shin, 52.0); gl.uniform1f(U.u_SpecK, 0.65);
     gl.uniform3fv(U.u_OccluderCenter, [0, 0, 0]); gl.uniform1f(U.u_OccluderR, satBodyRadius);
     renderGroup(encGPU, encMeshes, encTex, encSpecTex, encM, 0.18);
+
+    /* 3. Saturn rings — transparent, depth-tested against Saturn body + Enceladus */
+    gl.uniform1f(U.u_Shin, 20.0); gl.uniform1f(U.u_SpecK, 0.10);
+    gl.uniform3fv(U.u_OccluderCenter, encWorld); gl.uniform1f(U.u_OccluderR, 0.42);
+    renderGroup(satRingGPU, satRingMeshes, satRingTex, satRingSpec, satM, 0.02);
+    gl.depthMask(true); /* rings leave depthMask=false; restore so next frame's gl.clear works */
 
     /* Pass 2 — bright extract */
     gl.bindFramebuffer(gl.FRAMEBUFFER, bloomA.fbo);
