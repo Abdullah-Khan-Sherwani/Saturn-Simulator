@@ -2,7 +2,10 @@ import { mat4, vec3 } from 'gl-matrix';
 import { mkProg, glBuf, glTex2D, glTexCubeFromImages,
          mkRenderTarget, freeRenderTarget, cacheUniforms, bindTex } from './gl-utils.js';
 import { loadImage, loadCubemapFaces } from './geometry.js';
+import { loadGLTF, extractMeshes } from './gltf-loader.js';
 import { RT_VS, RT_FS, POST_VS, BRIGHT_FS, BLUR_FS, COMPOSITE_FS } from './shaders.js';
+
+const isRing = m => /saturn2/.test(m.name);
 
 const ENC_ORBIT_R = 15.0;
 // Toward the sun. Tilted ~32° out of the ring plane so the rings throw a clear
@@ -24,18 +27,32 @@ async function main() {
   resize();
   window.addEventListener('resize', resize);
 
-  /* ── Load textures + starfield cubemap (in parallel) ───────────────────── */
+  /* ── Load image textures + starfield cubemap (in parallel) ─────────────── */
   msgEl.textContent = 'Loading textures…';
-  const [satImg, encImg, ringImg, cubeFaces] = await Promise.all([
+  const [satImg, ringImg, cubeFaces] = await Promise.all([
     loadImage('/8k_saturn.jpg'),
-    loadImage('/enceladus_surface.jpg'),
     loadImage('/8k_saturn_ring_alpha.png'),
     loadCubemapFaces('/cubemap_starmap_2020_1024'),
   ]);
-  const satTex  = glTex2D(gl, satImg);
-  const encTex  = glTex2D(gl, encImg);
-  const ringTex = glTex2D(gl, ringImg);
-  const envCube = glTexCubeFromImages(gl, cubeFaces);
+
+  /* ── GLB models — parsed only for their embedded diffuse + specular maps.
+     Saturn's body specular/glossiness map and Enceladus' diffuse map live
+     inside the GLBs; we sample them on the analytic spheres. ─────────────── */
+  const fmtMB = e => e.lengthComputable
+    ? `${(e.loaded / 1048576).toFixed(0)} / ${(e.total / 1048576).toFixed(0)} MB` : '…';
+  const [satGLTF, encGLTF] = await Promise.all([
+    loadGLTF('/saturn.glb',    e => { msgEl.textContent = 'Saturn model: '    + fmtMB(e); }),
+    loadGLTF('/enceladus.glb', e => { msgEl.textContent = 'Enceladus model: ' + fmtMB(e); }),
+  ]);
+  const satMeshes = extractMeshes(satGLTF).filter(m => !/(mimas|enceladus)/.test(m.name));
+  const satBody   = satMeshes.find(m => !isRing(m) && m.specImage) ?? satMeshes[0];
+  const encBody   = extractMeshes(encGLTF).find(m => m.image);
+
+  const satTex     = glTex2D(gl, satImg);
+  const satSpecTex = glTex2D(gl, satBody.specImage);   // KHR specular/glossiness map
+  const encTex     = glTex2D(gl, encBody.image);       // Enceladus diffuse map
+  const ringTex    = glTex2D(gl, ringImg);
+  const envCube    = glTexCubeFromImages(gl, cubeFaces);
 
   /* ── Programs: one ray tracer + three post passes ──────────────────────── */
   const rtProg     = mkProg(gl, RT_VS,   RT_FS);
@@ -45,7 +62,7 @@ async function main() {
 
   const RtU   = cacheUniforms(gl, rtProg, [
     'u_InvVP', 'u_Cam', 'u_Time', 'u_SunDir', 'u_SunCol', 'u_EncCenter',
-    'u_SatTex', 'u_EncTex', 'u_RingTex', 'u_Env', 'u_FogColor', 'u_FogDensity',
+    'u_SatTex', 'u_SatSpecTex', 'u_EncTex', 'u_RingTex', 'u_Env', 'u_FogColor', 'u_FogDensity',
   ]);
   const BrightU = cacheUniforms(gl, brightProg, ['u_Img', 'u_Threshold']);
   const BlurU   = cacheUniforms(gl, blurProg,   ['u_Img', 'u_Texel', 'u_Dir']);
@@ -142,10 +159,11 @@ async function main() {
     gl.uniform3fv(RtU.u_EncCenter,  encCenter);
     gl.uniform3fv(RtU.u_FogColor,   new Float32Array([0, 0, 0.018]));
     gl.uniform1f (RtU.u_FogDensity, 0.011);
-    bindTex(gl, gl.TEXTURE0, gl.TEXTURE_2D,       satTex,  RtU.u_SatTex,  0);
-    bindTex(gl, gl.TEXTURE3, gl.TEXTURE_2D,       encTex,  RtU.u_EncTex,  3);
-    bindTex(gl, gl.TEXTURE2, gl.TEXTURE_2D,       ringTex, RtU.u_RingTex, 2);
-    bindTex(gl, gl.TEXTURE1, gl.TEXTURE_CUBE_MAP, envCube, RtU.u_Env,     1);
+    bindTex(gl, gl.TEXTURE0, gl.TEXTURE_2D,       satTex,     RtU.u_SatTex,     0);
+    bindTex(gl, gl.TEXTURE4, gl.TEXTURE_2D,       satSpecTex, RtU.u_SatSpecTex, 4);
+    bindTex(gl, gl.TEXTURE3, gl.TEXTURE_2D,       encTex,     RtU.u_EncTex,     3);
+    bindTex(gl, gl.TEXTURE2, gl.TEXTURE_2D,       ringTex,    RtU.u_RingTex,    2);
+    bindTex(gl, gl.TEXTURE1, gl.TEXTURE_CUBE_MAP, envCube,    RtU.u_Env,        1);
     drawQuad();
 
     /* Pass 2 — bright extract */

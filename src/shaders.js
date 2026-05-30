@@ -41,8 +41,9 @@ uniform vec3 u_SunCol;
 
 uniform vec3  u_EncCenter;  // Enceladus centre (orbits, so it is a uniform)
 
-uniform sampler2D   u_SatTex;   // 4096x2048 equirectangular Saturn body
-uniform sampler2D   u_EncTex;   // equirectangular Enceladus surface
+uniform sampler2D   u_SatTex;   // 4096x2048 equirectangular Saturn body (diffuse map)
+uniform sampler2D   u_SatSpecTex;// Saturn KHR spec/gloss map (rgb = specular, a = gloss) from saturn.glb
+uniform sampler2D   u_EncTex;   // equirectangular Enceladus surface (diffuse map)
 uniform sampler2D   u_RingTex;  // 8192x500 ring strip: rgb = colour, a = density
 uniform samplerCube u_Env;      // Milky-Way starfield cubemap
 
@@ -111,9 +112,11 @@ vec2 sphereUV(vec3 n, vec3 axis, float spin) {
   return vec2((lon + PI) / (2.0 * PI) + spin, lat / PI);
 }
 
-/* ── Shared Phong + shadow + environment reflection + fog ─────────────────── */
+/* ── Shared Phong + shadow + environment reflection + fog ─────────────────────
+   specColor is the specular reflectance (from a specular map or a constant) and
+   shininess the Blinn-Phong exponent — together the material's "reflectance". ── */
 vec3 surface(vec3 p, vec3 N, vec3 rd, vec3 albedo,
-             float specK, float shininess, float envStr) {
+             vec3 specColor, float shininess, float envStr) {
   vec3  L = u_SunDir;
   vec3  V = -rd;
   vec3  H = normalize(L + V);
@@ -122,10 +125,10 @@ vec3 surface(vec3 p, vec3 N, vec3 rd, vec3 albedo,
   float spec = pow(max(dot(N, H), 0.0), shininess);
 
   vec3 col = 0.06 * albedo                                    // ambient
-           + sh * diff * albedo * u_SunCol                    // diffuse
-           + sh * spec * specK  * u_SunCol;                   // specular
+           + sh * diff * albedo   * u_SunCol                  // diffuse
+           + sh * spec * specColor * u_SunCol;                // specular
 
-  col += texture(u_Env, reflect(rd, N)).rgb * envStr * specK; // Environment Mapping
+  col += texture(u_Env, reflect(rd, N)).rgb * envStr;         // Environment Mapping
 
   float f = exp(-u_FogDensity * length(p - u_Cam));           // Fog
   return mix(u_FogColor, col, clamp(f, 0.0, 1.0));
@@ -133,14 +136,17 @@ vec3 surface(vec3 p, vec3 N, vec3 rd, vec3 albedo,
 
 /* ── Per-body shading ─────────────────────────────────────────────────────── */
 vec3 shadeSaturn(vec3 p, vec3 N, vec3 rd) {
-  vec3  albedo   = texture(u_SatTex, sphereUV(N, RING_AXIS, u_Time * 0.12)).rgb;
-  float specMask = dot(albedo, vec3(0.299, 0.587, 0.114));    // texture-driven gloss map
-  return surface(p, N, rd, albedo, 0.45 * specMask, 26.0, 0.04);
+  vec2 uv = sphereUV(N, RING_AXIS, u_Time * 0.06);            // longitude scroll = spin
+  vec3 albedo = texture(u_SatTex, uv).rgb;                    // diffuse map
+  vec4 sg     = texture(u_SatSpecTex, uv);                    // specular/glossiness map
+  vec3 specColor  = sg.rgb * 1.6;                             // KHR specular colour (lifted to read)
+  float shininess = sg.a * 255.0 + 1.0;                       // gloss → Blinn-Phong exponent
+  return surface(p, N, rd, albedo, specColor, shininess, 0.04);
 }
 
 vec3 shadeEnceladus(vec3 p, vec3 N, vec3 rd) {
-  vec3 albedo = texture(u_EncTex, sphereUV(N, vec3(0.0, 1.0, 0.0), u_Time * 0.30)).rgb * 0.92;
-  return surface(p, N, rd, albedo, 0.30, 55.0, 0.12);
+  vec3 albedo = texture(u_EncTex, sphereUV(N, vec3(0.0, 1.0, 0.0), u_Time * 0.15)).rgb * 0.92;
+  return surface(p, N, rd, albedo, vec3(0.30), 55.0, 0.12);  // icy, no spec map → constant
 }
 
 vec3 shadeRing(vec3 p, vec3 rgb, vec3 rd) {
