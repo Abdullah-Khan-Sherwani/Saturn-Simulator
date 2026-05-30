@@ -46,7 +46,9 @@ async function main() {
   ]);
   const satMeshes = extractMeshes(satGLTF).filter(m => !/(mimas|enceladus)/.test(m.name));
   const satBody   = satMeshes.find(m => !isRing(m) && m.specImage) ?? satMeshes[0];
-  const encBody   = extractMeshes(encGLTF).find(m => m.image);
+  // enceladus.glb also contains "gaspluim" (gas-plume) meshes; pick the body.
+  const encMeshes = extractMeshes(encGLTF);
+  const encBody   = encMeshes.find(m => /enceladus/.test(m.name) && m.image) ?? encMeshes.find(m => m.image);
 
   const satTex     = glTex2D(gl, satImg);
   const satSpecTex = glTex2D(gl, satBody.specImage);   // KHR specular/glossiness map
