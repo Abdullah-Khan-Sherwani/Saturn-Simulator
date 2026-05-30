@@ -1,49 +1,196 @@
-/* GLSL ES 3.00 shader sources — exported for use by saturn.js */
+/* GLSL ES 3.00 shader sources — exported for use by saturn.js
+ *
+ * The scene is drawn by ONE full-screen quad whose fragment shader casts a
+ * ray per pixel into an analytically-defined scene (two spheres + a ring
+ * plane). That is GPU ray tracing: no scene triangles are rasterised, only
+ * the quad that carries the framebuffer. Passes 2–4 (bloom) are unchanged
+ * post-processing on the ray-traced image.
+ */
 
-export const SKYBOX_VS = /* glsl */`#version 300 es
+/* ── Full-screen quad: pass NDC straight through ──────────────────────────── */
+export const RT_VS = /* glsl */`#version 300 es
 in  vec2 a_Pos;
 out vec2 v_Ndc;
 void main() {
   v_Ndc       = a_Pos;
-  gl_Position = vec4(a_Pos, .9999, 1.0);
+  gl_Position = vec4(a_Pos, 0.0, 1.0);
 }`;
 
-export const SKYBOX_FS = /* glsl */`#version 300 es
+/* ── The ray tracer ──────────────────────────────────────────────────────────
+   Baseline : per-pixel Phong (ambient + diffuse + specular), material
+              shininess/reflectance, diffuse + texture-driven specular maps,
+              directional sun light, correct normals.
+   Advanced : Environment Mapping (3/5) · Fog (2/5) · Gamma Correction (2/5).
+              Bloom (4/5) is the separate post pass. Combined effort 11/10.
+   Ray-traced extras: hard shadows by shadow rays (ring shadow on Saturn,
+              Saturn shadow on rings, mutual planet/moon eclipses) and
+              semi-transparent rings whose density comes from a texture.
+──────────────────────────────────────────────────────────────────────────── */
+export const RT_FS = /* glsl */`#version 300 es
 precision highp float;
+
 in  vec2 v_Ndc;
-uniform samplerCube u_Skybox;
-uniform mat4 u_InvViewProj;
-uniform vec3 u_Cam;
 out vec4 outColor;
+
+uniform mat4 u_InvVP;   // inverse(proj*view) — unprojects a pixel to a world ray
+uniform vec3 u_Cam;     // camera (ray origin)
+uniform float u_Time;   // seconds, drives Saturn spin
+
+uniform vec3 u_SunDir;  // normalised direction TOWARD the sun
+uniform vec3 u_SunCol;
+
+uniform vec3  u_EncCenter;  // Enceladus centre (orbits, so it is a uniform)
+
+uniform sampler2D   u_SatTex;   // 4096x2048 equirectangular Saturn body
+uniform sampler2D   u_EncTex;   // equirectangular Enceladus surface
+uniform sampler2D   u_RingTex;  // 8192x500 ring strip: rgb = colour, a = density
+uniform samplerCube u_Env;      // Milky-Way starfield cubemap
+
+uniform vec3  u_FogColor;
+uniform float u_FogDensity;
+
+/* Fixed scene geometry (world units) */
+const float SAT_R    = 3.2;                              // Saturn radius
+const float ENC_R    = 0.42;                             // Enceladus radius
+const float RING_IN  = 3.9;                              // ring inner radius
+const float RING_OUT = 7.6;                              // ring outer radius
+const vec3  RING_AXIS = vec3(-0.44932, 0.89337, 0.0);    // +Y tilted 26.7° about Z
+const float PI  = 3.14159265;
+const float EPS = 1e-3;
+
+/* ── Intersections ──────────────────────────────────────────────────────── */
+// Nearest positive ray-sphere hit, or -1.0 for a miss.
+float hitSphere(vec3 ro, vec3 rd, vec3 ce, float r) {
+  vec3  oc = ro - ce;
+  float b  = dot(oc, rd);
+  float c  = dot(oc, oc) - r * r;
+  float h  = b * b - c;
+  if (h < 0.0) return -1.0;
+  h = sqrt(h);
+  float t = -b - h;
+  if (t > EPS) return t;
+  t = -b + h;
+  return t > EPS ? t : -1.0;
+}
+
+// Ray vs ring annulus (plane through origin, normal = RING_AXIS).
+// Returns t and the radial fraction across the ring [0,1].
+float hitRing(vec3 ro, vec3 rd, out float radFrac, out vec3 p) {
+  float dn = dot(rd, RING_AXIS);
+  if (abs(dn) < 1e-6) return -1.0;            // ray parallel to ring plane
+  float t = -dot(ro, RING_AXIS) / dn;
+  if (t <= EPS) return -1.0;
+  p = ro + t * rd;
+  float r = length(p);
+  if (r < RING_IN || r > RING_OUT) return -1.0;
+  radFrac = (r - RING_IN) / (RING_OUT - RING_IN);
+  return t;
+}
+
+// rgb = ring colour, a = density (0 = empty gap, 1 = dense band).
+vec4 ringSample(float radFrac) { return texture(u_RingTex, vec2(radFrac, 0.5)); }
+
+/* ── Shadow ray: light transmittance toward the sun in [0,1] ─────────────── */
+float shadow(vec3 p) {
+  vec3 L = u_SunDir;
+  if (hitSphere(p, L, vec3(0.0),    SAT_R) > 0.0) return 0.0;  // Saturn occludes
+  float t = 1.0;
+  if (hitSphere(p, L, u_EncCenter,  ENC_R) > 0.0) t = 0.0;     // Enceladus occludes
+  float rf; vec3 rp;                                           // rings partially occlude
+  if (hitRing(p, L, rf, rp) > 0.0) t *= 1.0 - ringSample(rf).a;
+  return t;
+}
+
+/* ── Equirectangular UV from a surface normal around a given pole axis.
+      'spin' scrolls longitude over time to animate the body self-rotation. ── */
+vec2 sphereUV(vec3 n, vec3 axis, float spin) {
+  float lat = acos(clamp(dot(n, axis), -1.0, 1.0));        // 0 at north pole .. PI
+  vec3  e1  = normalize(cross(axis, vec3(0.0, 0.0, 1.0)));
+  vec3  e2  = cross(axis, e1);
+  float lon = atan(dot(n, e2), dot(n, e1));
+  return vec2((lon + PI) / (2.0 * PI) + spin, lat / PI);
+}
+
+/* ── Shared Phong + shadow + environment reflection + fog ─────────────────── */
+vec3 surface(vec3 p, vec3 N, vec3 rd, vec3 albedo,
+             float specK, float shininess, float envStr) {
+  vec3  L = u_SunDir;
+  vec3  V = -rd;
+  vec3  H = normalize(L + V);
+  float sh   = shadow(p + N * EPS);
+  float diff = max(dot(N, L), 0.0);
+  float spec = pow(max(dot(N, H), 0.0), shininess);
+
+  vec3 col = 0.06 * albedo                                    // ambient
+           + sh * diff * albedo * u_SunCol                    // diffuse
+           + sh * spec * specK  * u_SunCol;                   // specular
+
+  col += texture(u_Env, reflect(rd, N)).rgb * envStr * specK; // Environment Mapping
+
+  float f = exp(-u_FogDensity * length(p - u_Cam));           // Fog
+  return mix(u_FogColor, col, clamp(f, 0.0, 1.0));
+}
+
+/* ── Per-body shading ─────────────────────────────────────────────────────── */
+vec3 shadeSaturn(vec3 p, vec3 N, vec3 rd) {
+  vec3  albedo   = texture(u_SatTex, sphereUV(N, RING_AXIS, u_Time * 0.12)).rgb;
+  float specMask = dot(albedo, vec3(0.299, 0.587, 0.114));    // texture-driven gloss map
+  return surface(p, N, rd, albedo, 0.45 * specMask, 26.0, 0.04);
+}
+
+vec3 shadeEnceladus(vec3 p, vec3 N, vec3 rd) {
+  vec3 albedo = texture(u_EncTex, sphereUV(N, vec3(0.0, 1.0, 0.0), u_Time * 0.30)).rgb * 0.92;
+  return surface(p, N, rd, albedo, 0.30, 55.0, 0.12);
+}
+
+vec3 shadeRing(vec3 p, vec3 rgb, vec3 rd) {
+  float sh  = shadow(p + RING_AXIS * EPS);                    // Saturn's shadow band
+  float lit = 0.22 + 0.78 * sh;                              // dust scatter + direct sun
+  vec3  col = rgb * lit * u_SunCol;
+  float f   = exp(-u_FogDensity * length(p - u_Cam));
+  return mix(u_FogColor, col, clamp(f, 0.0, 1.0));
+}
+
+/* ── Background: starfield cubemap + a bright sun disk (fuels bloom) ───────── */
+vec3 background(vec3 rd) {
+  vec3  stars = texture(u_Env, rd).rgb * 0.40;   // dim deep space so it reads black
+  float d     = dot(rd, u_SunDir);
+  vec3  sun   = u_SunCol * (smoothstep(0.9994, 0.9998, d) * 6.0   // disk
+                          + pow(max(d, 0.0), 900.0) * 1.5);        // halo
+  return stars + sun;
+}
+
 void main() {
-  vec4 farPos = u_InvViewProj * vec4(v_Ndc, 1.0, 1.0);
-  vec3 world  = farPos.xyz / max(farPos.w, 1e-6);
-  vec3 dir    = normalize(world - u_Cam);
-  outColor    = vec4(texture(u_Skybox, dir).rgb, 1.0);
+  /* Primary ray: unproject the far plane at this pixel (same maths as a skybox) */
+  vec4 far = u_InvVP * vec4(v_Ndc, 1.0, 1.0);
+  vec3 ro  = u_Cam;
+  vec3 rd  = normalize(far.xyz / far.w - u_Cam);
+
+  /* Nearest opaque hit among {Saturn, Enceladus, background} */
+  float tSat = hitSphere(ro, rd, vec3(0.0),   SAT_R);
+  float tEnc = hitSphere(ro, rd, u_EncCenter, ENC_R);
+  float t    = 1e30;
+  vec3  col  = background(rd);
+  if (tSat > 0.0 && tSat < t) {
+    t = tSat; vec3 p = ro + t * rd; col = shadeSaturn(p, normalize(p), rd);
+  }
+  if (tEnc > 0.0 && tEnc < t) {
+    t = tEnc; vec3 p = ro + t * rd; col = shadeEnceladus(p, normalize(p - u_EncCenter), rd);
+  }
+
+  /* Composite the semi-transparent ring if it sits in front of that hit */
+  float rf; vec3 rp;
+  float tRing = hitRing(ro, rd, rf, rp);
+  if (tRing > 0.0 && tRing < t) {
+    vec4 rs = ringSample(rf);
+    col = mix(col, shadeRing(rp, rs.rgb, rd), rs.a);   // a = local ring density
+  }
+
+  /* Gamma Correction (linear → display) */
+  outColor = vec4(pow(max(col, vec3(0.0)), vec3(1.0 / 2.2)), 1.0);
 }`;
 
-export const SUN_VS = /* glsl */`#version 300 es
-in vec3 a_Pos;
-in vec2 a_UV;
-uniform mat4 u_MVP;
-out vec2 v_UV;
-void main() {
-  v_UV = a_UV;
-  gl_Position = u_MVP * vec4(a_Pos, 1.0);
-}`;
-
-export const SUN_FS = /* glsl */`#version 300 es
-precision highp float;
-in vec2 v_UV;
-uniform sampler2D u_Tex;
-uniform float     u_Intensity;
-out vec4 outColor;
-void main() {
-  vec3 tex = texture(u_Tex, v_UV).rgb;
-  vec3 col = vec3(1.0) - exp(-tex * u_Intensity);
-  outColor = vec4(col, 1.0);
-}`;
-
+/* ── Post-processing (unchanged from the rasteriser) ──────────────────────── */
 export const POST_VS = /* glsl */`#version 300 es
 in vec2 a_Pos;
 out vec2 v_UV;
@@ -93,131 +240,4 @@ void main() {
   vec3 scene = texture(u_Scene, v_UV).rgb;
   vec3 bloom = texture(u_Bloom, v_UV).rgb;
   outColor = vec4(scene + bloom * u_Strength, 1.0);
-}`;
-
-export const PLANET_VS = /* glsl */`#version 300 es
-in vec3 a_Pos;
-in vec3 a_Norm;
-in vec2 a_UV;
-
-uniform mat4 u_MVP;
-uniform mat4 u_M;
-uniform mat3 u_N;
-uniform vec2 u_UVRepeat;
-uniform vec2 u_UVOffset;
-
-out vec3 v_Wpos;
-out vec3 v_Norm;
-out vec2 v_UV;
-
-void main() {
-  vec4 wp = u_M * vec4(a_Pos, 1.0);
-  v_Wpos  = wp.xyz;
-  v_Norm  = normalize(u_N * a_Norm);
-  v_UV    = a_UV * u_UVRepeat + u_UVOffset;
-  gl_Position = u_MVP * vec4(a_Pos, 1.0);
-}`;
-
-/* ── Planet fragment shader ─────────────────────────────────────────────────
-   Baseline  : Phong (ambient + diffuse + specular), per-fragment, textures,
-               material shininess + reflectance, directional sun + point light.
-   Advanced  : Environment Mapping (3/5) · Fog (2/5) · Gamma Correction (2/5)
-               Combined effort: 7 / 10.
-──────────────────────────────────────────────────────────────────────────── */
-export const PLANET_FS = /* glsl */`#version 300 es
-precision highp float;
-
-in vec3 v_Wpos;
-in vec3 v_Norm;
-in vec2 v_UV;
-
-uniform vec3  u_LDir;
-uniform vec3  u_LCol;
-
-uniform vec3      u_Base;
-uniform float     u_Shin;
-uniform float     u_SpecK;
-uniform float     u_Alpha;
-uniform bool      u_TexOn;
-uniform sampler2D u_Tex;
-uniform float     u_AlphaCutoff;
-uniform bool      u_SpecTexOn;
-uniform sampler2D u_SpecTex;
-
-/* Environment Mapping (Advanced 3/5) */
-uniform samplerCube u_EnvMap;
-uniform float       u_EnvStr;
-
-/* Fog (Advanced 2/5) */
-uniform float u_FogDensity;
-uniform vec3  u_FogColor;
-
-/* Analytical planetary shadow — occluder sphere (center + radius).
-   Saturn shadowing Enceladus: center=origin, R=satBodyRadius.
-   Enceladus shadowing Saturn: center=encWorldPos, R=encRadius.
-   R=0 disables the test. */
-uniform vec3  u_OccluderCenter;
-uniform float u_OccluderR;
-
-uniform vec3 u_Cam;
-out vec4 outColor;
-
-void main() {
-  vec4 texel = u_TexOn ? texture(u_Tex, v_UV) : vec4(u_Base, 1.0);
-  if (texel.a < u_AlphaCutoff) discard;
-  vec3 base = texel.rgb;
-
-  vec3 N = normalize(gl_FrontFacing ? v_Norm : -v_Norm);
-  vec3 V = normalize(u_Cam - v_Wpos);
-  vec3 L = normalize(u_LDir);
-  vec3 H = normalize(L + V);
-
-  float diff = max(dot(N, L), 0.0);
-
-  /* KHR_materials_pbrSpecularGlossiness: RGB=specular, A=glossiness */
-  vec3  specCol;
-  float shininess;
-  if (u_SpecTexOn) {
-    vec4 sg   = texture(u_SpecTex, v_UV);
-    specCol   = sg.rgb;
-    shininess = sg.a * 255.0 + 1.0;
-  } else {
-    specCol   = vec3(u_SpecK);
-    shininess = u_Shin;
-  }
-
-  float spec = pow(max(dot(N, H), 0.0), shininess);
-
-  /* Saturn occults the sun — analytical ray-sphere shadow test.
-     Cast a ray from the fragment toward the sun (direction L).
-     If it intersects Saturn's sphere (center = origin, radius = u_OccluderR)
-     and the sphere lies between the fragment and the sun, the fragment is in shadow.
-     Ambient is kept so eclipsed regions stay faintly lit by starlight. */
-  float shadowFactor = 1.0;
-  if (u_OccluderR > 0.0) {
-    vec3  oc   = v_Wpos - u_OccluderCenter;
-    float b    = dot(oc, L);
-    float c    = dot(oc, oc) - u_OccluderR * u_OccluderR;
-    float disc = b * b - c;
-    if (b < 0.0 && c > 0.0 && disc >= 0.0) shadowFactor = 0.0;
-  }
-
-  vec3 ambient  = 0.08 * u_LCol * base;
-  vec3 diffuse  = diff * shadowFactor * u_LCol * base;
-  vec3 specular = spec * shadowFactor * u_LCol * specCol;
-  vec3 col = ambient + diffuse + specular;
-
-  /* Environment Mapping (Advanced 3/5) — star cubemap reflections */
-  vec3 R_env   = reflect(-V, N);
-  vec3 envSamp = texture(u_EnvMap, R_env).rgb;
-  col += envSamp * u_EnvStr * specCol;
-
-  /* Fog (Advanced 2/5) — exponential deep-space fog */
-  float fogFactor = exp(-u_FogDensity * length(u_Cam - v_Wpos));
-  col = mix(u_FogColor, col, clamp(fogFactor, 0.0, 1.0));
-
-  /* Gamma Correction (Advanced 2/5) */
-  col = pow(max(col, vec3(0.0)), vec3(1.0 / 2.2));
-
-  outColor = vec4(col, u_Alpha * texel.a);
 }`;

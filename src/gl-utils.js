@@ -26,33 +26,6 @@ export function glBuf(gl, data, target = gl.ARRAY_BUFFER) {
   return b;
 }
 
-export function makeVAO(gl, prog, mesh) {
-  const vao = gl.createVertexArray();
-  gl.bindVertexArray(vao);
-
-  for (const [name, data, size] of [['a_Pos', mesh.pos, 3], ['a_Norm', mesh.norm, 3], ['a_UV', mesh.uv, 2]]) {
-    if (!data) continue;
-    const loc = gl.getAttribLocation(prog, name);
-    if (loc < 0) continue;
-    gl.bindBuffer(gl.ARRAY_BUFFER, glBuf(gl, data));
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
-  }
-
-  let drawCount, drawMode;
-  if (mesh.idx) {
-    glBuf(gl, mesh.idx, gl.ELEMENT_ARRAY_BUFFER);
-    drawCount = mesh.idx.length;
-    drawMode  = 'el';
-  } else {
-    drawCount = mesh.pos.length / 3;
-    drawMode  = 'arr';
-  }
-
-  gl.bindVertexArray(null);
-  return { vao, drawCount, drawMode, idxType: mesh.idxType };
-}
-
 export function glTex2D(gl, image) {
   const t = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, t);
@@ -131,12 +104,4 @@ export function bindTex(gl, unit, type, tex, loc, slot) {
   gl.activeTexture(unit);
   gl.bindTexture(type, tex);
   gl.uniform1i(loc, slot);
-}
-
-export function drawVAO(gl, g) {
-  gl.bindVertexArray(g.vao);
-  if (g.drawMode === 'el')
-    gl.drawElements(gl.TRIANGLES, g.drawCount, g.idxType, 0);
-  else
-    gl.drawArrays(gl.TRIANGLES, 0, g.drawCount);
 }
