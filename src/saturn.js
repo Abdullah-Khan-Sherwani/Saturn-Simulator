@@ -172,7 +172,7 @@ async function main() {
       gl.uniform1f (U.u_AlphaCutoff, 0.0);
       gl.uniform2fv(U.u_UVRepeat,    m.uvRepeat ?? [1, 1]);
       gl.uniform2fv(U.u_UVOffset,    m.uvOffset ?? [0, 0]);
-      gl.uniform1f (U.u_EnvStr,      ring ? 0.005 : envStrength);
+      gl.uniform1f (U.u_EnvStr,      ring ? 0.04 : envStrength);
 
       gl.disable(gl.CULL_FACE);
       if (ring) {
@@ -197,7 +197,7 @@ async function main() {
         gl.uniform1i(U.u_SpecTexOn, 1);
       } else {
         gl.uniform1i(U.u_SpecTexOn, 0);
-        if (ring) { gl.uniform1f(U.u_Shin, 8.0); gl.uniform1f(U.u_SpecK, 0.05); }
+        if (ring) { gl.uniform1f(U.u_Shin, 12.0); gl.uniform1f(U.u_SpecK, 0.45); }
       }
 
       drawVAO(gl, g);
@@ -292,9 +292,9 @@ async function main() {
     gl.uniform3fv(U.u_OccluderCenter, [0, 0, 0]); gl.uniform1f(U.u_OccluderR, satBodyRadius);
     renderGroup(encGPU, encMeshes, encTex, encSpecTex, encM, 0.18);
 
-    /* 3. Saturn rings — transparent, depth-tested against Saturn body + Enceladus */
+    /* 3. Saturn rings — Saturn body sphere occludes the rings on its dark side */
     gl.uniform1f(U.u_Shin, 20.0); gl.uniform1f(U.u_SpecK, 0.10);
-    gl.uniform3fv(U.u_OccluderCenter, encWorld); gl.uniform1f(U.u_OccluderR, 0.42);
+    gl.uniform3fv(U.u_OccluderCenter, [0, 0, 0]); gl.uniform1f(U.u_OccluderR, satBodyRadius);
     renderGroup(satRingGPU, satRingMeshes, satRingTex, satRingSpec, satM, 0.02);
     gl.depthMask(true); /* rings leave depthMask=false; restore so next frame's gl.clear works */
 
