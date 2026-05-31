@@ -70,30 +70,49 @@ const satTex = satMeshes.map(m =>
 
 ### 3. Specular Texture Maps (KHR_materials_pbrSpecularGlossiness)
 
-**Where:** `src/shaders.js` — `PLANET_FS` lines 213–221; `src/gltf-loader.js` lines 92–102
+**Where:** `src/shaders.js` — `PLANET_FS`; `src/gltf-loader.js`; `src/gl-utils.js` `makeVAO`
 
 **How it works:**
 
-When a mesh's GLTF material has the `KHR_materials_pbrSpecularGlossiness` extension, the loader extracts a specular-glossiness texture where:
-- **RGB channels** = per-texel specular colour
-- **Alpha channel** = glossiness (remapped to shininess as `sg.a * 255 + 1`)
+`saturn.glb` uses the `KHR_materials_pbrSpecularGlossiness` extension. Every material carries separate diffuse and specular-glossiness textures plus two scalar factors. The loader reads all of these and the GPU uses them:
 
+| Field in GLB | Loader field | GPU uniform | Meaning |
+|---|---|---|---|
+| `diffuseTexture` | `mesh.image` | `u_Tex` | Base colour (albedo) |
+| `specularGlossinessTexture` | `mesh.specImage` | `u_SpecTex` | RGB=specular colour, A=glossiness |
+| `specularGlossinessTexture.texCoord` | `mesh.specUV` | `u_SpecUV` | Which UV set to sample (0 or 1) |
+| `specularFactor` | `mesh.specFactor` | `u_SpecFactor` | Multiplies the map's RGB |
+| `glossinessFactor` | `mesh.glossFactor` | `u_GlossFactor` | Multiplies the map's alpha |
+
+**Two UV sets:** All primitives in `saturn.glb` carry `TEXCOORD_0` (diffuse) and `TEXCOORD_1` (specular). The body and ring spec maps declare `texCoord: 1`, so the spec map is sampled with `v_UV2`, not the diffuse `v_UV`. The loader reads both sets; `makeVAO` binds both as vertex attributes (`a_UV`, `a_UV2`); the vertex shader passes both as `v_UV` / `v_UV2`.
+
+**What is loaded for each object:**
+
+| Object | Diffuse | Diffuse format | Specular | Specular format | Spec UV set |
+|---|---|---|---|---|---|
+| Saturn body | `/8k_saturn.jpg` (external) | 2048² RGB | img[1] in GLB | 1024² **RGBA** | UV1 |
+| Rings (saturn2_A) | img[3] in GLB | 1024² RGB | img[4] in GLB | 256² **GRAY** | UV1 |
+| Haze ring (saturn2_B) | img[2] in GLB | 1024² RGBA | none | — | — |
+| Enceladus | img[2] from `enceladus.glb` | 2048² JPEG | none (PBR workflow) | — | — |
+
+**Fragment shader spec computation:**
 ```glsl
 if (u_SpecTexOn) {
-    vec4 sg   = texture(u_SpecTex, v_UV);
-    specCol   = sg.rgb;
-    shininess = sg.a * 255.0 + 1.0;
+    vec2 sUV  = (u_SpecUV > 0.5) ? v_UV2 : v_UV;   // correct UV set per map
+    vec4 sg   = texture(u_SpecTex, sUV);
+    specCol   = sg.rgb * u_SpecFactor;               // per-texel colour × material factor
+    shininess = sg.a * u_GlossFactor * 255.0 + 1.0; // per-texel gloss × material factor
 } else {
-    specCol   = vec3(u_SpecK);
+    specCol   = vec3(u_SpecK);   // flat fallback (Enceladus, haze ring)
     shininess = u_Shin;
 }
 ```
 
-When no specular texture is present (e.g. Enceladus uses uniform material parameters: `u_Shin = 52.0`, `u_SpecK = 0.65`).
+**The ring's spec map (img4) is grayscale with no alpha channel.** The browser uploads it as RGBA with `alpha = 1.0`. Without the `glossinessFactor`, shininess would be pinned to 256 (a mirror-tight lobe invisible on the flat ring disc). The asset's `glossinessFactor = 0.5` halves it to ~129 — the value the artist intended, and the reason reading that factor from the GLB rather than inventing a number matters.
 
 **Visual impact:**
-- **Without:** Uniform specular response across the entire surface — highlights are same brightness on rock as on ice.
-- **With:** Icy patches on Enceladus reflect the sun more intensely than dark craters. Specular variation matches the surface albedo map.
+- **Without:** Uniform specular response — same highlight intensity everywhere on a given mesh.
+- **With:** Saturn's body shows a spatially varying specular that follows its cloud-band texture. The ring has per-band specular variation driven by img4's grayscale values. Glossiness (highlight sharpness) is controlled per-material by the GLB, not hard-coded.
 
 ---
 

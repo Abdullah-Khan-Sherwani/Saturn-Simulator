@@ -137,12 +137,14 @@ Classic Phong uses `dot(reflect(-L, N), V)`. Blinn-Phong uses the **half-vector*
 Computing lighting per-vertex (Gouraud shading) interpolates the final colour across the triangle. Specular highlights can be missed entirely if the highlight peak falls between vertices. Per-fragment (Phong shading) computes lighting at every pixel, giving smooth, correct highlights regardless of polygon count.
 
 ### Material properties
-| Uniform | Saturn body | Enceladus | Rings (no spec tex) |
+| Uniform | Saturn body | Enceladus | saturn2_B haze |
 |---|---|---|---|
 | `u_Shin` (shininess) | 20.0 | 52.0 | 12.0 |
 | `u_SpecK` (spec coeff) | 0.10 | 0.65 | 0.45 |
 
-Enceladus is more specular — it's an icy moon, very reflective. Rings use a broad low-power highlight appropriate for scattered ice particles.
+These uniforms are the **fallback** — they only apply when `u_SpecTexOn = false` (no spec map loaded). The Saturn body and rings both carry spec-gloss maps from the GLB, so they use the texture path instead.
+
+Enceladus is more specular — it's an icy moon, very reflective.
 
 ---
 
@@ -170,25 +172,39 @@ v_Norm = normalize(u_N * a_Norm);
 
 ### What each object uses
 
-| Object | Diffuse map | Specular map |
-|---|---|---|
-| **Saturn body** | `/8k_saturn.jpg` (external, overrides GLTF) | img[1] embedded in `saturn.glb` (KHR specGloss) |
-| **"saturn2_b" node** | img[2] embedded in `saturn.glb` | none → flat `u_SpecK` |
-| **Rings** | img[3] embedded in `saturn.glb` | img[4] embedded in `saturn.glb` (KHR specGloss) |
-| **Enceladus** | img[2] embedded in `enceladus.glb` (JPEG) | none → flat `u_SpecK = 0.65` |
+| Object | Diffuse map | Format | Spec-gloss map | Format | UV set |
+|---|---|---|---|---|---|
+| **Saturn body** | `/8k_saturn.jpg` (external) | 2048² RGB JPEG | img[1] in `saturn.glb` | 1024² **RGBA** PNG | diff=UV0, **spec=UV1** |
+| **Rings (saturn2_A)** | img[3] in `saturn.glb` | 1024² RGB PNG | img[4] in `saturn.glb` | 256² **GRAY** PNG | diff=UV0, **spec=UV1** |
+| **saturn2_B (haze ring)** | img[2] in `saturn.glb` | 1024² RGBA PNG | none | — | UV0 |
+| **Enceladus** | img[2] in `enceladus.glb` | 2048×1024 JPEG | none | — | UV0 |
+
+**Key detail — two UV sets:** every primitive in `saturn.glb` carries both `TEXCOORD_0` (diffuse UVs) and `TEXCOORD_1` (specular UVs). The `KHR_materials_pbrSpecularGlossiness` material declares `texCoord: 1` for both the body and ring spec maps, meaning they are authored against the second UV set. The loader reads `TEXCOORD_1` into `mesh.uv2`; the vertex shader passes it as `v_UV2`; the fragment shader selects `v_UV2` or `v_UV` via `u_SpecUV`.
+
+**Key detail — material factors:** every material also specifies `specularFactor` (RGB multiplier on the spec map's colour) and `glossinessFactor` (multiplier on the map's alpha before it becomes shininess). These are read from the GLB and passed as `u_SpecFactor` / `u_GlossFactor`:
+
+| Material | specularFactor | glossinessFactor | → shininess at max alpha |
+|---|---|---|---|
+| Saturn body (`saturn1_A`) | 0.23, 0.23, 0.23 | 1.0 | `1×1×255+1 = 256` |
+| Rings (`saturn2_A`) | 1.0, 1.0, 1.0 | **0.5** | `1×0.5×255+1 ≈ 129` |
 
 ### Why does Enceladus have no specular map?
-`enceladus.glb` uses the standard **PBR metallic-roughness** workflow, not `KHR_materials_pbrSpecularGlossiness`. The GLTF loader (`gltf-loader.js:91–111`) only extracts `specImage` from the KHR path. The PBR path extracts only `baseColorTexture`. So Enceladus's `specImage` is always `null` and the flat `u_SpecK` uniform drives its specular.
+`enceladus.glb` uses the standard **PBR metallic-roughness** workflow, not `KHR_materials_pbrSpecularGlossiness`. The loader only extracts `specImage` from the KHR path. The PBR path extracts only `baseColorTexture`. So Enceladus's `specImage` is always `null` and the flat `u_SpecK = 0.65` uniform drives its specular.
 
-### KHR_materials_pbrSpecularGlossiness (used by Saturn/rings)
+### KHR_materials_pbrSpecularGlossiness (used by Saturn body and rings)
 ```glsl
-// shaders.js — when u_SpecTexOn = true
-vec4 sg   = texture(u_SpecTex, v_UV);
-specCol   = sg.rgb;                    // RGB = specular colour tint
-shininess = sg.a * 255.0 + 1.0;       // A = glossiness [0,1] → shininess [1,256]
+// shaders.js — PLANET_FS, when u_SpecTexOn = true
+vec2 sUV    = (u_SpecUV > 0.5) ? v_UV2 : v_UV;   // UV1 for body+ring, UV0 for others
+vec4 sg     = texture(u_SpecTex, sUV);
+specCol     = sg.rgb * u_SpecFactor;               // RGB × specularFactor from GLB
+shininess   = sg.a * u_GlossFactor * 255.0 + 1.0; // A × glossinessFactor → exponent
 ```
 
-Alpha channel of the specular-glossiness texture encodes how sharp/glossy the surface is. Multiply by 255 maps the 0–1 range to a meaningful Blinn-Phong exponent range.
+- **RGB** — per-texel specular colour, multiplied by the material's `specularFactor`.
+- **Alpha** — per-texel glossiness, multiplied by `glossinessFactor`, mapped to a Blinn-Phong shininess exponent (0→1, 255+1).
+- **`u_SpecUV`** — selects which UV set to sample; the body and ring spec maps declare `texCoord: 1`, so they use `v_UV2`.
+
+The ring's spec map (img4, 256² grayscale) has **no alpha channel** — the browser uploads it as RGBA with `alpha = 1`. This means `shininess = 1×glossFactor×255+1`. Without the `glossinessFactor`, the alpha pins shininess to 256 (a mirror-tight lobe invisible on the flat disc); the `glossinessFactor = 0.5` halves it to ~129, which is the value the asset author intended.
 
 ### Texture quality settings (gl-utils.js)
 ```js
