@@ -265,7 +265,7 @@ this to tile their texture radially. Default is `uvRepeat=[1,1], uvOffset=[0,0]`
 
 ---
 
-## Planet Fragment Shader (`PLANET_FS`) — Lines 115–218
+## Planet Fragment Shader (`PLANET_FS`) — Lines 115–255
 
 This is the most complex shader. **Baseline + 3 advanced techniques.**
 
@@ -296,9 +296,18 @@ uniform vec3  u_OccluderCenter;  // shadow occluder sphere #1 center
 uniform float u_OccluderR;       // occluder #1 radius (0=disabled)
 uniform vec3  u_Occluder2Center; // shadow occluder sphere #2 center
 uniform float u_Occluder2R;      // occluder #2 radius (0=disabled)
+
+/* Ring shadow uniforms */
+uniform float     u_RingShadowOn;  // 1=receive ring shadow (body/moon), 0=the rings themselves
+uniform vec3      u_RingNormal;    // world-space unit normal of the ring plane
+uniform vec3      u_RingCenter;    // world-space ring centre (= Saturn centre)
+uniform float     u_RingInner;     // world-space inner radius of the ring annulus
+uniform float     u_RingOuter;     // world-space outer radius of the ring annulus
+uniform sampler2D u_RingAlphaTex;  // radial opacity strip (alpha channel = ring opacity vs radius)
+uniform float     u_RingShadowStr; // overall shadow strength (0..1)
 ```
 
-### Diffuse Texture Fetch + Alpha Discard (lines 169–171)
+### Diffuse Texture Fetch + Alpha Discard (lines 200–202)
 
 ```glsl
 vec4 texel = u_TexOn ? texture(u_Tex, v_UV) : vec4(u_Base, 1.0);
@@ -310,7 +319,7 @@ vec3 base = texel.rgb;
 Equivalent to setting the fragment as fully transparent. Used for alpha-tested
 geometry (ring transparency is handled differently via blending, not discard).
 
-### Phong Lighting Vectors (lines 173–176)
+### Phong Lighting Vectors (lines 204–207)
 
 ```glsl
 vec3 N = normalize(gl_FrontFacing ? v_Norm : -v_Norm);
@@ -330,7 +339,7 @@ It's an approximation but cheaper and produces a more physically plausible
 highlight shape. The two give the same result when the view and light are
 coplanar with the normal.
 
-### Phong Diffuse (line 178)
+### Phong Diffuse (line 209)
 
 ```glsl
 float diff = max(dot(N, L), 0.0);
@@ -340,7 +349,7 @@ Lambert's cosine law: light intensity is proportional to `cos(θ)` where θ
 is the angle between the surface normal and the light direction.
 `max(..., 0.0)` clamps to zero when the light is behind the surface (θ > 90°).
 
-### Specular Texture / Scalar Specular (lines 183–192)
+### Specular Texture / Scalar Specular (lines 213–223)
 
 ```glsl
 if (u_SpecTexOn) {
@@ -361,7 +370,7 @@ by 255 and adding 1 converts to a usable shininess exponent (1 to 256).
 `pow(dot(N,H), shininess)` — the Phong specular term. Larger shininess =
 tighter, shinier highlight (metals). Smaller = broad, diffuse-like highlight.
 
-### Analytical Planetary Shadow (helper at lines 159–166, test at 197–199)
+### Analytical Planetary Shadow (helper at lines 174–181, test at lines 228–230)
 
 The ray-sphere test lives in a reusable helper so a fragment can be tested
 against **two** occluders:
@@ -416,20 +425,82 @@ the Saturn-body and Enceladus draws use only slot #1 and disable slot #2 with
 `R = 0`. (A previous revision had a single slot and could show only one of the
 two shadows at a time.)
 
-### Phong Accumulation (lines 201–204)
+### Translucent Ring Shadow — `ringShadow()` helper
+
+```glsl
+float ringShadow(vec3 p, vec3 L) {
+  if (u_RingShadowOn < 0.5) return 0.0;
+  float denom = dot(L, u_RingNormal);
+  if (abs(denom) < 1e-4) return 0.0;                       // ray parallel to ring plane
+  float s = dot(u_RingCenter - p, u_RingNormal) / denom;
+  if (s <= 0.0) return 0.0;                                // plane is away from the sun
+  float rho = length((p + s * L) - u_RingCenter);
+  if (rho < u_RingInner || rho > u_RingOuter) return 0.0;  // misses the annulus
+  float u = (rho - u_RingInner) / (u_RingOuter - u_RingInner);
+  return texture(u_RingAlphaTex, vec2(u, 0.5)).a;
+}
+```
+
+**What it does:** For a given fragment world position `p` and sunlight direction
+`L`, determine how much of the direct sunlight is blocked by the ring disc.
+
+**Step by step:**
+1. **`u_RingShadowOn` gate** — early return `0.0` for the ring meshes themselves
+   (controlled by `saturn.js` setting the flag to 0.0 before drawing rings).
+
+2. **Ray-plane intersection.** The ring plane is defined by its normal `u_RingNormal`
+   and a point on it `u_RingCenter`. The ray is `p + s * L`. Substituting into the
+   plane equation `dot(point - u_RingCenter, u_RingNormal) = 0` gives:
+   ```
+   s = dot(u_RingCenter - p, u_RingNormal) / dot(L, u_RingNormal)
+   ```
+   `denom = dot(L, u_RingNormal)` is the cosine of the angle between the sun ray and
+   the ring plane normal. If near zero, the ray is nearly parallel to the ring plane
+   and would never meaningfully intersect it — skip.
+
+3. **`s <= 0` check** — if the intersection is behind the fragment relative to the sun
+   direction (i.e. the ring plane is on the wrong side), no shadow.
+
+4. **Annulus test** — compute `rho`, the radial distance from the ring centre to the
+   intersection point. If it's outside `[ringInner, ringOuter]`, the ray misses the
+   ring disc entirely.
+
+5. **Opacity lookup** — normalize `rho` to `u ∈ [0, 1]` across the annulus width and
+   sample the radial opacity texture. The texture's **alpha channel** encodes the ring's
+   real density profile (dense B-ring, nearly transparent Cassini Division, faint A-ring
+   edges). Return that alpha as the shadow strength.
+
+**Usage in `main()`:**
+```glsl
+float ringLit = 1.0 - ringShadow(v_Wpos, L) * u_RingShadowStr;
+float lit     = shadowFactor * ringLit;
+vec3 diffuse  = diff * lit * u_LCol * base;
+vec3 specular = spec * lit * u_LCol * specCol;
+```
+
+The ring shadow is multiplied into the **direct-light** factor alongside the sphere
+shadow. Ambient light is intentionally left unaffected — a shadowed region still
+receives a small ambient contribution from indirect starlight (the `0.08` ambient term),
+so it doesn't go completely black.
+
+This differs from the sphere shadow in that it's **translucent**: a ring opacity of 0.5
+only halves the direct light (a thin part of the rings), whereas the sphere shadow is
+binary (full occlude or none).
+
+### Phong Accumulation
 
 ```glsl
 vec3 ambient  = 0.08 * u_LCol * base;
-vec3 diffuse  = diff * shadowFactor * u_LCol * base;
-vec3 specular = spec * shadowFactor * u_LCol * specCol;
+vec3 diffuse  = diff * lit * u_LCol * base;
+vec3 specular = spec * lit * u_LCol * specCol;
 vec3 col = ambient + diffuse + specular;
 ```
 
-Classic Phong: `ambient + diffuse + specular`. Shadow only suppresses diffuse
-and specular, not ambient — physically motivated (ambient represents indirect
-light bouncing from everywhere).
+Classic Phong: `ambient + diffuse + specular`. The combined `lit = shadowFactor * ringLit`
+factor suppresses diffuse and specular without touching ambient — physically motivated
+(ambient represents indirect light bouncing from everywhere, which shadow cannot block).
 
-### Advanced Technique 1: Environment Mapping (lines 207–210)
+### Advanced Technique 1: Environment Mapping (lines 242–245)
 
 ```glsl
 vec3 R_env   = reflect(-V, N);
@@ -451,7 +522,7 @@ strength. Specular colour is used as a mask: shiny regions reflect more.
 - Enceladus: `u_EnvStr = 0.18` (icy surface, more reflective)
 - Rings: `u_EnvStr = 0.04` (subtle sparkle)
 
-### Advanced Technique 2: Fog (lines 212–214)
+### Advanced Technique 2: Fog (lines 247–249)
 
 ```glsl
 float fogFactor = exp(-u_FogDensity * length(u_Cam - v_Wpos));
@@ -471,7 +542,7 @@ ambient colour, so far objects fade into the void rather than a white mist.
 `u_FogDensity = 0.013` — very low, so fog only affects very distant objects
 (Enceladus at 15 units from Saturn gets mild fog contribution).
 
-### Advanced Technique 3: Gamma Correction (lines 216–217)
+### Advanced Technique 3: Gamma Correction (lines 251–252)
 
 ```glsl
 col = pow(max(col, vec3(0.0)), vec3(1.0 / 2.2));
@@ -507,6 +578,9 @@ This converts from **linear colour space** to **sRGB display space**.
 | `gl_FrontFacing` for double-sided normals | `PLANET_FS` | Ring and interior rendering |
 | Blinn-Phong half-vector | `PLANET_FS` | `H = normalize(L + V)` |
 | Analytical ray-sphere shadow (two occluders) | `PLANET_FS` | `inShadowOf()`, `b < 0 && c > 0 && disc ≥ 0` |
+| Translucent ring shadow (ray-plane) | `PLANET_FS` | `ringShadow()`: intersect ray→sun with ring plane, sample radial opacity |
+| Ring shadow gate (`u_RingShadowOn`) | `PLANET_FS` | 0.0 for ring meshes prevents self-shadowing |
+| `lit = shadowFactor * ringLit` | `PLANET_FS` | Both hard sphere shadow and soft ring shadow combined before Phong |
 | Environment mapping with `reflect()` | `PLANET_FS` | `reflect(-V, N)` → cubemap sample |
 | Exponential fog | `PLANET_FS` | `exp(-density * dist)`, `mix()` |
 | Gamma correction | `PLANET_FS` | `pow(col, 1/2.2)` → sRGB output |

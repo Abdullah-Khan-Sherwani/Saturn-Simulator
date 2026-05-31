@@ -1,7 +1,7 @@
 # `src/saturn.js` — Deep-Dive Viva Guide
 
 > The main entry point. Orchestrates everything: asset loading, GPU object
-> creation, camera control, and the 4-pass render loop. ~330 lines.
+> creation, camera control, and the 4-pass render loop. ~380 lines.
 
 ---
 
@@ -13,7 +13,8 @@ import { mkProg, makeVAO, glBuf, glTex2D, glTexCubeFromImages,
          mkRenderTarget, freeRenderTarget, drawVAO, cacheUniforms, bindTex } from './gl-utils.js';
 import { loadImage, loadCubemapFaces, boundsOf } from './geometry.js';
 import { loadGLTF, extractMeshes } from './gltf-loader.js';
-import { SKYBOX_VS, SKYBOX_FS, ... } from './shaders.js';
+import { SKYBOX_VS, SKYBOX_FS, POST_VS,
+         BRIGHT_FS, BLUR_FS, COMPOSITE_FS, PLANET_VS, PLANET_FS } from './shaders.js';
 ```
 
 > `makeUvSphere` (used to build the old sun sphere) and the `SUN_VS`/`SUN_FS`
@@ -21,22 +22,36 @@ import { SKYBOX_VS, SKYBOX_FS, ... } from './shaders.js';
 
 **`gl-matrix`** — a battle-tested JS math library for 4×4 matrices and 3D vectors.
 All matrix operations (`mat4.perspective`, `mat4.lookAt`, `mat4.multiply`,
-`mat4.rotateY`, `mat4.scale`, `mat4.translate`, `mat4.invert`) come from here.
-`mat3.normalFromMat4` computes the normal matrix.
+`mat4.rotateX`, `mat4.rotateZ`, `mat4.scale`, `mat4.translate`, `mat4.invert`) come
+from here. `mat3.normalFromMat4` computes the normal matrix.
 
 ---
 
-## Constants (Lines 9–13)
+## Constants (Lines 9–19)
 
 ```js
 const ENC_ORBIT_R = 15;                          // Enceladus orbit radius in world units
 const SUN_COL     = new Float32Array([1.0, 0.97, 0.85]);  // warm white
 const SUN_DIR_RAW = [-0.6, -0.2, -0.8];          // raw direction, normalised later
+
+const SAT_TILT = 56.73 * Math.PI / 180;   // Saturn's axial tilt in radians
+const SAT_SPIN = 0.15;                    // body spin rate about its pole (radians/frame)
+
 const isRing = m => /saturn2/.test(m.name);       // mesh name filter
 ```
 
 `ENC_ORBIT_R = 15` world units — chosen so Enceladus is visually far enough
 from Saturn to be distinct but close enough to be interesting in frame.
+
+`SAT_TILT = 56.73°` — the tilt is applied via `rotateX` because in the GLB model
+Saturn's pole is local +Z. Leaning the pole away from world +Y is a rotation about X.
+
+`SAT_SPIN = 0.15` — the body rotates about its own pole (local +Z after tilt). Because
+the ring disc's normal is also local +Z, spinning about Z leaves the ring plane
+orientation unchanged. This means the ring shadow band stays fixed relative to the
+planet's equatorial plane while Saturn's surface bands animate under it — which is
+physically correct. The old `rotateY` spin was in the ring plane, which made the shadow
+sweep around incorrectly.
 
 `isRing` — Saturn's GLB file names the ring mesh something containing `"saturn2"`.
 This regex tests the mesh name to separate ring geometry (transparent, no depth write)
@@ -47,7 +62,7 @@ architecture.
 
 ## `main()` — Startup Sequence
 
-### WebGL2 Context (Lines 18–20)
+### WebGL2 Context (Lines 24–25)
 
 ```js
 const gl = canvas.getContext('webgl2');
@@ -61,7 +76,7 @@ on unsupported browsers (Safari < 15, some mobile). WebGL 2 is required for:
 - `Uint32Array` index buffers in `gl.drawElements`
 - VAO support without an extension
 
-### DPR-aware Canvas Resize (Lines 21–26)
+### DPR-aware Canvas Resize (Lines 27–32)
 
 ```js
 const resize = () => {
@@ -81,7 +96,7 @@ pixel resolution. `| 0` truncates to integer (bitwise OR with 0 = fast floor).
 `Math.min(..., 2)` — caps at 2×. On phones with DPR=3, rendering at 3× costs
 9× the fill rate of 1×; 2× gives excellent quality with manageable cost.
 
-### Parallel Asset Loading (Lines 35–38)
+### Parallel Asset Loading (Lines 41–44)
 
 ```js
 const [satGLTF, encGLTF] = await Promise.all([
@@ -94,7 +109,7 @@ const [satGLTF, encGLTF] = await Promise.all([
 is `max(sat_time, enc_time)` instead of `sat_time + enc_time`.
 The progress callbacks update the loading message live.
 
-### Mesh Filtering (Lines 42–45)
+### Mesh Filtering (Lines 48–51)
 
 ```js
 const satMeshes = extractMeshes(satGLTF).filter(m => !/(mimas|enceladus)/.test(m.name));
@@ -106,7 +121,7 @@ The regex filter strips them out, keeping only Saturn body and rings.
 
 ---
 
-## Program Compilation (Lines 49–53)
+## Program Compilation (Lines 55–59)
 
 ```js
 const skyProg    = mkProg(gl, SKYBOX_VS,  SKYBOX_FS);
@@ -117,12 +132,12 @@ const compProg   = mkProg(gl, POST_VS,    COMPOSITE_FS);
 ```
 
 Five programs. Note `POST_VS` is reused by `brightProg`, `blurProg`, and `compProg` —
-all post-processing passes use the same full-screen quad vertex shader. (There is
-no longer a separate sun program; the sun is part of `skyProg`'s `SKYBOX_FS`.)
+all post-processing passes use the same full-screen quad vertex shader. There is
+no longer a separate sun program; the sun is part of `skyProg`'s `SKYBOX_FS`.
 
 ---
 
-## Full-Screen Quad VAO (Lines 56–63)
+## Full-Screen Quad VAO (Lines 62–69)
 
 ```js
 const quadVAO = gl.createVertexArray();
@@ -151,11 +166,16 @@ the 3-attribute `planetProg` layout.
 
 ---
 
-## Texture Upload (Lines 66–76)
+## Texture Upload (Lines 72–87)
 
 ```js
 const satBodyImg = await loadImage('/8k_saturn.jpg');
 const satBodyTex = glTex2D(gl, satBodyImg);
+
+/* Radial ring-opacity strip (8192×500 RGBA): alpha = ring opacity from inner
+   to outer edge — drives the translucent ring shadow on Saturn & Enceladus. */
+const ringAlphaImg = await loadImage('/8k_saturn_ring_alpha.png');
+const ringAlphaTex = glTex2D(gl, ringAlphaImg);
 
 const satGPU     = satMeshes.map(m => makeVAO(gl, planetProg, m));
 const satTex     = satMeshes.map(m =>
@@ -163,15 +183,21 @@ const satTex     = satMeshes.map(m =>
 );
 ```
 
-Only the Saturn body texture (`8k_saturn.jpg`) is loaded here now — the sun is
-procedural so `8k_sun.jpg` is no longer fetched. Ring meshes use their own
-embedded GLB texture (`m.image`); body meshes all share the single `satBodyTex`
-(the 8K Saturn photo). This is a texture atlas strategy: one 8K image for all
-non-ring geometry.
+Only the Saturn body texture (`8k_saturn.jpg`) is loaded for the planet — the sun is
+procedural so `8k_sun.jpg` is no longer fetched. Ring meshes use their own embedded
+GLB texture (`m.image`); body meshes all share `satBodyTex`.
+
+`ringAlphaTex` is used exclusively for the ring shadow calculation. It is a wide image
+whose **alpha channel encodes the ring's radial opacity** from the inner edge (left) to
+the outer edge (right). When the shader needs to know how much shadow a point on
+Saturn's surface receives from the rings, it projects that point toward the sun, hits
+the ring plane, converts the hit radius to a 0–1 UV, and samples this texture.
+This means the shadow naturally replicates the actual ring structure (dense B-ring,
+sparse Cassini Division, etc.) without any additional geometry.
 
 ---
 
-## Opaque/Transparent Pre-split (Lines 81–87)
+## Opaque/Transparent Pre-split (Lines 92–97)
 
 ```js
 const satBodyIdx  = satMeshes.map((_, i) => i).filter(i => !isRing(satMeshes[i]));
@@ -182,14 +208,10 @@ const satRingGPU   = satRingIdx.map(i => satGPU[i]);
 ```
 
 At startup, Saturn's meshes are split into body-only and ring-only lists.
-The comment explains why:
-
-> *"draw all opaques before any transparent rings, keeping Enceladus correctly
->  depth-sorted against the rings regardless of camera angle."*
 
 This is the **depth-sorting / painter's algorithm** concern for alpha-blended
 geometry. If rings were drawn before Enceladus:
-- Rings write colour but not depth (depthMask=false)
+- Rings write colour but not depth (`depthMask=false`)
 - Enceladus drawn after would appear in front of rings even when behind them
 
 By drawing Enceladus (opaque → depth written) before rings (transparent →
@@ -197,7 +219,7 @@ reads depth but doesn't write), the GPU's depth test naturally handles occlusion
 
 ---
 
-## Uniform Location Cache (Lines 89–95)
+## Uniform Location Cache (Lines 100–108)
 
 ```js
 const U = cacheUniforms(gl, planetProg, [
@@ -206,17 +228,60 @@ const U = cacheUniforms(gl, planetProg, [
   'u_SpecTexOn','u_SpecTex','u_UVRepeat','u_UVOffset',
   'u_EnvMap','u_EnvStr','u_FogDensity','u_FogColor','u_OccluderCenter','u_OccluderR',
   'u_Occluder2Center','u_Occluder2R',
+  'u_RingShadowOn','u_RingNormal','u_RingCenter','u_RingInner','u_RingOuter',
+  'u_RingAlphaTex','u_RingShadowStr',
 ]);
 ```
 
-24 uniforms for the planet shader cached at startup (the last two are the second
-shadow-occluder slot, used so the rings can be eclipsed by Saturn's body **and**
-Enceladus at once). Every frame that calls `gl.uniform*()` uses these pre-fetched
-locations — no string lookups per frame.
+31 uniforms cached at startup. Every frame that calls `gl.uniform*()` uses these
+pre-fetched integer locations — no string lookups per frame.
+
+The ring shadow uniforms (last 7):
+- `u_RingShadowOn` — flag: `1.0` for bodies/moons that receive a shadow, `0.0` for
+  the ring geometry itself (rings don't self-shadow).
+- `u_RingNormal` — world-space unit normal of the ring plane, recalculated every frame.
+- `u_RingCenter` — world-space centre of the rings (always `(0,0,0)`, Saturn's origin).
+- `u_RingInner`, `u_RingOuter` — annulus radii in world units.
+- `u_RingAlphaTex` — the radial opacity strip texture (bound to `TEXTURE3`, slot 3).
+- `u_RingShadowStr` — overall shadow attenuation strength (set to 0.9).
+
+Note `SkyU` (line 109) now caches two extra uniforms `u_SunDir` and `u_SunCol` compared
+to the old version — needed because the skybox shader draws the procedural sun.
 
 ---
 
-## Scene Constants (Lines 102–111)
+## Ring Annulus Radii (Lines 128–136)
+
+```js
+let ringInnerLocal = Infinity, ringOuterLocal = 0;
+for (const m of satRingMeshes)
+  for (let i = 0; i < m.pos.length; i += 3) {
+    const r = Math.hypot(m.pos[i] - sB.cx, m.pos[i + 1] - sB.cy);
+    if (r < ringInnerLocal) ringInnerLocal = r;
+    if (r > ringOuterLocal) ringOuterLocal = r;
+  }
+const ringInner = sS * ringInnerLocal;
+const ringOuter = sS * ringOuterLocal;
+const ringNormal = vec3.create();
+```
+
+The rings lie in Saturn's equatorial plane (local XY, normal local +Z). Their inner
+and outer extent in world units is needed by the ring shadow shader so it can tell
+whether a projected point lands inside the annulus.
+
+Rather than hardcoding radii, the code **measures them from the actual mesh vertex
+positions**: for every vertex across all ring chunks, compute the radial distance from
+Saturn's geometric centre using `Math.hypot(x - cx, y - cy)`. Track the min (inner
+edge) and max (outer edge). Then multiply by `sS` (the scale factor that maps the GLB
+into world units) to get world-space radii. This automatically matches whatever the
+artist exported — no manual tuning.
+
+`ringNormal` is allocated once here (as a reusable `vec3`) and filled every frame from
+the model matrix.
+
+---
+
+## Scene Constants (Lines 115–139)
 
 ```js
 const spaceCubemap = glTexCubeFromImages(gl, await loadCubemapFaces('/cubemap_starmap_2020_1024'));
@@ -226,27 +291,26 @@ const eB = boundsOf(encMeshes[0].pos);
 const sB = boundsOf(satBodyMesh.pos);
 const sS = 3.2  / sB.r;    // Saturn scale factor
 const eS = 0.42 / eB.r;    // Enceladus scale factor
-const satBodyRadius = sS * sB.r;  // = 3.2 world units
+const satBodyRadius = sS * sB.r;  // = 3.2 world units exactly
 ```
 
-`satBodyRadius = sS * sB.r = sS * (sB.r)`. Since `sS = 3.2 / sB.r`:
-`satBodyRadius = (3.2 / sB.r) * sB.r = 3.2`. It's always exactly 3.2.
-This is used as the occluder radius for the analytical shadow test.
+`satBodyRadius = sS * sB.r = (3.2 / sB.r) * sB.r = 3.2`. It's always exactly 3.2.
+This is used as the occluder radius for the analytical sphere-shadow test.
 
 ```js
 const SUN_DIR = vec3.normalize(vec3.create(), SUN_DIR_RAW);
 ```
 
-The sun direction `SUN_DIR` is used both by the lighting shader (the sun is a
-directional light — infinitely far, so only direction matters for shading) and
-now by `SKYBOX_FS`, which draws the procedural sun disk/halo in that direction.
-There is no longer a sun-sphere GPU object or a `SUN_POS` world position.
+`SUN_DIR` is used both by the lighting shader (directional light — infinitely far, so
+only direction matters for shading) and by `SKYBOX_FS`, which draws the procedural
+sun disk/halo in that direction. There is no longer a sun-sphere GPU object or a
+`SUN_POS` world position.
 
 ---
 
-## Camera System (Lines 114–143)
+## Camera System (Lines 142–171)
 
-### View Mode Toggle (Lines 114–121)
+### View Mode Toggle (Lines 142–149)
 
 ```js
 let viewMode = 'saturn', satCamR = 22.0, encCamR = 3.0;
@@ -261,7 +325,7 @@ window.addEventListener('keydown', e => {
 Two view modes with separate orbit radii. Pressing `E` snaps the camera
 target from Saturn's origin `(0,0,0)` to Enceladus's current world position.
 
-### Arcball Orbit (Lines 124–142)
+### Arcball Orbit (Lines 152–159)
 
 ```js
 let camRx = 0.22, camRy = 0.0;
@@ -280,7 +344,7 @@ const onMove = (x, y) => {
 `camRx` clamped to ±1.45 radians (±83°) — prevents gimbal lock at the poles
 where the yaw axis collapses.
 
-Camera position in the render loop:
+Camera position in the render loop (lines 249–253):
 ```js
 const camPos = [
   ctr[0] + camR * Math.sin(camRy) * Math.cos(camRx),
@@ -294,7 +358,7 @@ This is the **spherical coordinate → Cartesian** conversion:
 - Y: `R · sin(pitch)`
 - Z: `R · cos(yaw) · cos(pitch)`
 
-### Scroll Zoom (Lines 139–143)
+### Scroll Zoom (Lines 167–171)
 
 ```js
 canvas.addEventListener('wheel', e => {
@@ -310,7 +374,7 @@ required to call `e.preventDefault()` — which stops the page from scrolling.
 
 ---
 
-## Render Targets: Lazy Resize (Lines 147–156)
+## Render Targets: Lazy Resize (Lines 177–184)
 
 ```js
 let sceneRT = null, bloomA = null, bloomB = null, rtW = 0, rtH = 0;
@@ -335,7 +399,7 @@ are freed and new ones are allocated at the new size.
 
 ---
 
-## `renderGroup()` — Lines 159–204
+## `renderGroup()` — Lines 187–233
 
 ```js
 function renderGroup(gpuList, meshList, texList, specTexList, modelMat, envStrength) {
@@ -348,9 +412,19 @@ function renderGroup(gpuList, meshList, texList, specTexList, modelMat, envStren
 Sets the three transform matrices for an entire body (Saturn, Enceladus).
 Then iterates all meshes in the group, setting per-mesh uniforms and drawing.
 
-### Ring vs Body Render State (Lines 172–180)
+### Ring Shadow Flag (per-mesh, line 198)
 
-```glsl
+```js
+gl.uniform1f(U.u_RingShadowOn, ring ? 0.0 : 1.0);  // rings don't self-shadow
+```
+
+Set per mesh inside `renderGroup`. Ring meshes pass `0.0` so the `ringShadow()`
+function in the shader immediately returns 0 — the ring geometry never casts a shadow
+on itself. Body meshes and Enceladus pass `1.0` to receive the shadow.
+
+### Ring vs Body Render State (Lines 201–209)
+
+```js
 if (ring) {
   gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   gl.depthMask(false);
@@ -376,7 +450,7 @@ if (ring) {
   (alternating pixels of ring and body appear randomly). Polygon offset
   pushes ring depth values slightly further, ensuring body pixels always win.
 
-### Draw Order Within `renderGroup` (Lines 200–203)
+### Draw Order Within `renderGroup` (Lines 230–232)
 
 ```js
 gpuList.forEach((g, i) => { if (!isRing(meshList[i])) drawMesh(..., false); });
@@ -390,9 +464,9 @@ behind the planet body are correctly occluded.
 
 ---
 
-## Render Loop — `frame()` — Lines 208–326
+## Render Loop — `frame()` — Lines 237–370
 
-### Time and Orbits (Lines 209–216)
+### Time and Orbits (Lines 238–244)
 
 ```js
 t += 0.004;
@@ -404,7 +478,7 @@ const encWorld = [ENC_ORBIT_R * Math.cos(encAngle), 0, -ENC_ORBIT_R * Math.sin(e
 radians, giving it a smooth circular orbit in the XZ plane. World position:
 `x = R·cos(θ), z = -R·sin(θ)` (negative Z so the orbit goes the right way visually).
 
-### View/Projection Matrices (Lines 226–229)
+### View/Projection Matrices (Lines 255–258)
 
 ```js
 mat4.perspective(proj, Math.PI / 4, W / H, 0.1, 8000.0);
@@ -415,8 +489,8 @@ mat4.invert(invVP, vp);
 
 **Perspective matrix** — FOV = 45° (`π/4`), aspect = canvas width/height,
 near = 0.1, far = 8000. The generous far plane keeps distant geometry within
-the frustum; near = 0.1 for the Enceladus close-up view. (The sun no longer
-needs the far plane — it is drawn at infinity in the skybox shader.)
+the frustum; near = 0.1 for the Enceladus close-up view. The sun is drawn at
+infinity in the skybox shader and doesn't need the far plane.
 
 **`mat4.lookAt(view, eye, center, up)`** — constructs a view matrix that
 positions the camera at `camPos`, looking at `ctr`, with `+Y` as up.
@@ -424,79 +498,103 @@ positions the camera at `camPos`, looking at `ctr`, with `+Y` as up.
 **`invVP`** — the inverse of the VP matrix. Passed to `SKYBOX_FS` to
 reconstruct world-space rays from NDC fragment positions.
 
-### Pass 1: 3D Scene (Lines 231–290)
+### Pass 1: 3D Scene (Lines 261–337)
 
-**Skybox + sun** — depth test disabled, full-screen quad. Drawn first so
-subsequent geometry overwrites it where it covers the skybox. `SKYBOX_FS` now
-also draws the procedural sun disk + halo (given `u_SunDir` and `u_SunCol`),
-so there is no separate sun draw call. Because the skybox writes no depth, the
-planets and rings drawn afterward correctly paint over the sun where they
-overlap it.
+**Skybox + sun** (lines 265–272) — depth test disabled, full-screen quad. Drawn first so
+subsequent geometry overwrites it where it covers the skybox. `SKYBOX_FS` draws the
+procedural sun disk + halo (given `u_SunDir` and `u_SunCol`), so there is no separate
+sun draw call. Because the skybox writes no depth, planets drawn afterward correctly
+paint over the sun where they overlap it.
 
-**Planet rendering order** (each line sets its shadow occluder(s) before drawing):
+**Planet rendering order** — each step sets its occluder(s) before drawing:
 
 ```
-1. Saturn body    (opaque)      → writes depth; occluder = Enceladus
-2. Enceladus      (opaque)      → writes depth (occluded by Saturn body depth); occluder = Saturn body
-3. Saturn rings   (transparent) → reads depth (occluded by 1 & 2), alpha blended;
-                                   occluders = Saturn body (slot 1) + Enceladus (slot 2)
+1. Saturn body    (opaque)      → writes depth; occluder slot 1 = Enceladus (line 322)
+2. Enceladus      (opaque)      → writes depth; occluder slot 1 = Saturn body (line 328)
+3. Saturn rings   (transparent) → reads depth, alpha blended;
+                                   occluder slot 1 = Saturn body, slot 2 = Enceladus (lines 334–335)
 ```
 
-At step 3:
+At the end of step 3 (line 337):
 ```js
 gl.depthMask(true); /* rings leave depthMask=false; restore so next frame's gl.clear works */
 ```
-Important: `gl.clear(gl.DEPTH_BUFFER_BIT)` at the start of the next frame
-requires `depthMask(true)`. If forgotten, the depth buffer wouldn't clear
-and the next frame's depth test would be wrong.
+`gl.clear(gl.DEPTH_BUFFER_BIT)` at the start of the next frame requires
+`depthMask(true)`. If forgotten, the depth buffer wouldn't clear and the next
+frame's depth test would be wrong.
 
-### Saturn Model Matrix (Lines 255–259)
+### Saturn Model Matrix (Lines 289–306)
 
 ```js
 const satM = mat4.create();
-mat4.rotateZ (satM, satM, 26.7 * Math.PI / 180);  // axial tilt
-mat4.rotateY (satM, satM, t * 0.15);               // self-rotation
-mat4.scale   (satM, satM, [sS, sS, sS]);           // fit to world units
+mat4.rotateX (satM, satM, SAT_TILT);          // fixed axial tilt (tips pole from +Y toward +Z)
+mat4.rotateZ (satM, satM, t * SAT_SPIN);      // spin about the tilted pole (local +Z)
+mat4.scale   (satM, satM, [sS, sS, sS]);      // fit to world units
 mat4.translate(satM, satM, [-sB.cx, -sB.cy, -sB.cz]); // centre at origin
 ```
 
-**Transform order matters.** Matrix multiplications are applied in reverse
-order relative to the code (right-to-left multiplication):
+**Transform order** — applied right-to-left (standard column-major OpenGL convention):
 1. **Translate** — move geometric centre to origin
 2. **Scale** — fit to world size
-3. **RotateY** — animate self-rotation (slow, realistic)
-4. **RotateZ** — apply Saturn's 26.7° axial tilt
+3. **RotateZ** — spin about local +Z (the model's pole axis). Spinning about Z never
+   moves the +Z axis, so the ring disc normal (local +Z) is unaffected — the rings
+   hold their tilt while the surface bands underneath spin.
+4. **RotateX** — apply Saturn's axial tilt once (a fixed lean). This tips the pole
+   away from world +Y.
 
-`26.7°` is Saturn's real axial tilt (compared to Earth's 23.5°).
+**Why `rotateX` for tilt instead of `rotateZ`?** In the GLB model, Saturn's pole is
+local +Z. World +Y is "up." Leaning the pole away from vertical (the tilt) is
+a rotation about X. Previously the code did `rotateZ(26.7°)` (which rotated the whole
+model including the ring disc) and `rotateY(t * spin)` (which swept the disc normal in
+a circle, causing the ring shadow to tumble incorrectly). The current order is correct.
 
-### Enceladus Model Matrix (Lines 261–267)
+**Extracting the ring plane normal every frame (lines 299–306):**
+```js
+vec3.set(ringNormal, satM[8], satM[9], satM[10]);
+vec3.normalize(ringNormal, ringNormal);
+gl.uniform3fv(U.u_RingNormal, ringNormal);
+gl.uniform3fv(U.u_RingCenter, [0, 0, 0]);
+gl.uniform1f (U.u_RingInner,  ringInner);
+gl.uniform1f (U.u_RingOuter,  ringOuter);
+gl.uniform1f (U.u_RingShadowStr, 0.9);
+bindTex(gl, gl.TEXTURE3, gl.TEXTURE_2D, ringAlphaTex, U.u_RingAlphaTex, 3);
+```
+
+`satM[8], satM[9], satM[10]` is the **third column** of the 4×4 model matrix in
+column-major layout — this is exactly the world-space direction of local +Z after all
+rotations have been applied. Because the ring disc lies in local XY (normal = local +Z),
+this column gives the true ring plane normal in world space. It is recalculated every
+frame (though `SAT_TILT` is fixed, so the direction is actually constant; the code
+correctly handles the general case).
+
+These uniforms are uploaded *before* drawing Saturn's body and Enceladus, so the
+ring shadow is active during both those draw calls. The `ringAlphaTex` is bound to
+texture unit 3 (slots 0=diffuse, 1=cubemap, 2=specular are already occupied).
+
+### Enceladus Model Matrix (Lines 308–314)
 
 ```js
 const encM = mat4.create();
-mat4.rotateY (encM, encM, t * 0.70);          // orbital motion (matches encWorld)
+mat4.rotateY (encM, encM, t * 0.70);          // orbital motion (matches encWorld angle)
 mat4.rotateX (encM, encM, 0.09);              // slight orbital inclination
 mat4.translate(encM, encM, [ENC_ORBIT_R, 0, 0]); // move to orbit radius
-mat4.rotateY (encM, encM, t * 2.2);           // tidal locking self-spin
+mat4.rotateY (encM, encM, t * 2.2);           // self-rotation
 mat4.scale   (encM, encM, [eS, eS, eS]);      // scale to world size
 mat4.translate(encM, encM, [-eB.cx, -eB.cy, -eB.cz]); // centre
 ```
 
-**Two `rotateY` operations — orbital + tidal lock:**
+**Two `rotateY` operations — orbital + self-rotation:**
 - Inner `rotateY(t * 2.2)` — self-rotation (fast)
 - `translate([ENC_ORBIT_R, 0, 0])` — offset to orbit radius
 - Outer `rotateY(t * 0.70)` — orbits the whole thing around the origin
 
-This creates tidal locking: Enceladus spins at `2.2/0.70 ≈ 3.1×` the orbital
-rate, so it doesn't always face the same side toward Saturn (simplified model;
-real tidal locking would have the same rate, but this is aesthetically better).
-
 `encWorld` (the JS-side orbit position) uses the same angle `t * 0.70` and
-the same radius, so it exactly matches where the matrix places Enceladus.
+the same radius (line 244), so it exactly matches where the matrix places Enceladus.
 `encWorld` is fed as the occluder centre both when shading the Saturn body
 (Enceladus eclipsing Saturn) and as the rings' *second* occluder (Enceladus
 casting its small shadow onto the rings).
 
-### Pass 2: Bright Extraction (Lines 292–298)
+### Pass 2: Bright Extraction (Lines 339–345)
 
 ```js
 gl.bindFramebuffer(gl.FRAMEBUFFER, bloomA.fbo);
@@ -509,7 +607,7 @@ gl.bindVertexArray(quadVAO); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 Renders to `bloomA`. Source: `sceneRT.tex` (the 3D scene). Keeps only pixels
 brighter than 0.62.
 
-### Pass 3: Gaussian Blur (Lines 300–311)
+### Pass 3: Gaussian Blur (Lines 347–358)
 
 ```js
 gl.useProgram(blurProg);
@@ -536,7 +634,7 @@ size of one pixel in UV space, so the blur shader can step one pixel at a time.
 
 After the loop, `readTex` points to whichever buffer was last written.
 
-### Pass 4: Composite (Lines 313–320)
+### Pass 4: Composite (Lines 360–367)
 
 ```js
 gl.bindFramebuffer(gl.FRAMEBUFFER, null);   // render to screen
@@ -553,7 +651,7 @@ gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 Samples `sceneRT.tex` (sharp 3D scene) and `readTex` (blurred bloom).
 Adds them: `scene + bloom * 1.05`. The result appears on screen.
 
-### Animation Loop (Line 322)
+### Animation Loop (Line 369)
 
 ```js
 requestAnimationFrame(frame);
@@ -568,18 +666,24 @@ and gives the browser time to composite the canvas onto the page.
 
 ## Key Concepts Summary for Viva
 
-| Concept | Lines | Why |
-|---|---|---|
-| DPR-aware canvas sizing | 21–26 | Physical pixel rendering on HiDPI screens |
-| `Promise.all` parallel loading | 35–38, 67–69 | Network requests in parallel |
-| Mesh name filter for rings | 13, 42 | Separate opaque/transparent geometry |
-| Pre-split body/ring arrays | 83–90 | Guarantee correct draw order every frame |
-| Spherical coordinate camera | 226–230 | Arcball orbit: `sin/cos(yaw) * cos(pitch)` |
-| Lazy render target resize | 155–162 | Recreate FBOs only when canvas size changes |
-| Transform matrix order | 267–279 | Right-to-left: translate → scale → rotate |
-| 26.7° axial tilt | 268 | Saturn's real-world axial tilt |
-| Draw order: body → Enceladus → rings | 285–298 | Correct depth sorting, avoid depthMask artifacts |
-| `depthMask(true)` restore | 299 | Rings leave it false; must restore for next frame clear |
-| Ping-pong Gaussian blur | 309–320 | 6 passes alternating horizontal/vertical |
-| `bindFramebuffer(null)` | 323 | Restore default framebuffer (canvas) for final output |
-| `requestAnimationFrame` | 331 | Sync to display refresh, pause when hidden |
+| Concept | Why |
+|---|---|
+| DPR-aware canvas sizing | Physical pixel rendering on HiDPI screens |
+| `Promise.all` parallel loading | Network requests in parallel |
+| Mesh name filter for rings | Separate opaque/transparent geometry |
+| Pre-split body/ring arrays | Guarantee correct draw order every frame |
+| Spherical coordinate camera | Arcball orbit: `sin/cos(yaw) * cos(pitch)` |
+| Lazy render target resize | Recreate FBOs only when canvas size changes |
+| Transform matrix order (right-to-left) | translate → scale → rotateZ(spin) → rotateX(tilt) |
+| `rotateX(SAT_TILT)` for tilt, `rotateZ` for spin | Spin about local +Z leaves ring disc normal unchanged |
+| Ring annulus radii from mesh vertices | Automatically match the exported GLB; no hardcoding |
+| `satM[8,9,10]` = local +Z in world space | 3rd column of column-major model matrix = transformed +Z axis |
+| Ring shadow uniforms uploaded before body draw | Saturn body and Enceladus both receive ring shadow |
+| `u_RingAlphaTex` bound to TEXTURE3 (slot 3) | Slots 0/1/2 occupied by diffuse, cubemap, specular |
+| `u_RingAlphaTex` radial opacity strip | Shadow replicates real ring density (Cassini division, etc.) |
+| `u_RingShadowOn = 0` for ring meshes | Prevents rings from casting shadow on themselves |
+| Draw order: body → Enceladus → rings | Correct depth sorting, avoid depthMask artifacts |
+| `depthMask(true)` restore after rings | Rings leave it false; must restore for next frame clear |
+| Ping-pong Gaussian blur (6 passes) | 3 horizontal + 3 vertical for wide, soft glow |
+| `bindFramebuffer(null)` | Restore default framebuffer (canvas) for final output |
+| `requestAnimationFrame` | Sync to display refresh, pause when hidden |
