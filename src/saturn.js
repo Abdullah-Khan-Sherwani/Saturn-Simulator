@@ -10,6 +10,12 @@ const ENC_ORBIT_R = 15;
 const SUN_COL     = new Float32Array([1.0, 0.97, 0.85]);
 const SUN_DIR_RAW = [-0.6, -0.2, -0.8];
 
+/* Saturn's pole (and the ring-disc normal) is local +Z. To spin the planet
+   without tumbling the rings we spin about local Z and apply a FIXED tilt that
+   tips the pole away from +Z. SAT_TILT is Saturn's real axial tilt (obliquity). */
+const SAT_TILT = 56.73 * Math.PI / 180;   // Saturn's axial tilt (obliquity)
+const SAT_SPIN = 0.15;                    // body spin rate about its pole
+
 const isRing = m => /saturn2/.test(m.name);
 
 async function main() {
@@ -66,6 +72,11 @@ async function main() {
   const satBodyImg = await loadImage('/8k_saturn.jpg');
   const satBodyTex = glTex2D(gl, satBodyImg);
 
+  /* Radial ring-opacity strip (8192×500 RGBA): alpha = ring opacity from inner
+     to outer edge — drives the translucent ring shadow on Saturn & Enceladus. */
+  const ringAlphaImg = await loadImage('/8k_saturn_ring_alpha.png');
+  const ringAlphaTex = glTex2D(gl, ringAlphaImg);
+
   const satGPU     = satMeshes.map(m => makeVAO(gl, planetProg, m));
   const satTex     = satMeshes.map(m =>
     isRing(m) ? (m.image ? glTex2D(gl, m.image) : null) : satBodyTex
@@ -92,6 +103,8 @@ async function main() {
     'u_SpecTexOn','u_SpecTex','u_UVRepeat','u_UVOffset',
     'u_EnvMap','u_EnvStr','u_FogDensity','u_FogColor','u_OccluderCenter','u_OccluderR',
     'u_Occluder2Center','u_Occluder2R',
+    'u_RingShadowOn','u_RingNormal','u_RingCenter','u_RingInner','u_RingOuter',
+    'u_RingAlphaTex','u_RingShadowStr',
   ]);
   const SkyU   = cacheUniforms(gl, skyProg,    ['u_Skybox','u_InvViewProj','u_Cam','u_SunDir','u_SunCol']);
   const BrightU = cacheUniforms(gl, brightProg, ['u_Img','u_Threshold']);
@@ -107,6 +120,21 @@ async function main() {
   const sS = 3.2  / sB.r;
   const eS = 0.42 / eB.r;
   const satBodyRadius = sS * sB.r;
+
+  /* Ring annulus radii (world units). The rings lie in Saturn's equatorial
+     plane — local XY, normal local +Z (confirmed across all ring chunks) — and
+     are concentric with the body, so radius = hypot(x,y) about the body centre,
+     scaled by the same factor that maps the body into the scene. */
+  let ringInnerLocal = Infinity, ringOuterLocal = 0;
+  for (const m of satRingMeshes)
+    for (let i = 0; i < m.pos.length; i += 3) {
+      const r = Math.hypot(m.pos[i] - sB.cx, m.pos[i + 1] - sB.cy);
+      if (r < ringInnerLocal) ringInnerLocal = r;
+      if (r > ringOuterLocal) ringOuterLocal = r;
+    }
+  const ringInner = sS * ringInnerLocal;
+  const ringOuter = sS * ringOuterLocal;
+  const ringNormal = vec3.create();
 
   const SUN_DIR = vec3.normalize(vec3.create(), SUN_DIR_RAW);
 
@@ -167,6 +195,7 @@ async function main() {
       gl.uniform2fv(U.u_UVRepeat,    m.uvRepeat ?? [1, 1]);
       gl.uniform2fv(U.u_UVOffset,    m.uvOffset ?? [0, 0]);
       gl.uniform1f (U.u_EnvStr,      ring ? 0.04 : envStrength);
+      gl.uniform1f (U.u_RingShadowOn, ring ? 0.0 : 1.0);  // rings don't self-shadow
 
       gl.disable(gl.CULL_FACE);
       if (ring) {
@@ -252,11 +281,29 @@ async function main() {
     gl.uniform3fv(U.u_FogColor, new Float32Array([0, 0, 0.018]));
     bindTex(gl, gl.TEXTURE1, gl.TEXTURE_CUBE_MAP, spaceCubemap, U.u_EnvMap, 1);
 
+    /* Fixed axial tilt then spin about the pole (local Z). Spinning about Z
+       leaves the ring-disc normal unchanged, so the rings hold a steady tilt
+       and the ring shadow stays put while the planet's bands rotate under it —
+       rather than tumbling the disc (the old rotateY spin lay in the ring
+       plane, which swept the shadow around like ripples). */
     const satM = mat4.create();
-    mat4.rotateZ (satM, satM, 26.7 * Math.PI / 180);
-    mat4.rotateY (satM, satM, t * 0.15);
+    mat4.rotateX (satM, satM, SAT_TILT);
+    mat4.rotateZ (satM, satM, t * SAT_SPIN);
     mat4.scale   (satM, satM, [sS, sS, sS]);
     mat4.translate(satM, satM, [-sB.cx, -sB.cy, -sB.cz]);
+
+    /* Ring-shadow plane (shared by Saturn & Enceladus). The ring normal is the
+       model matrix's transformed local +Z axis (3rd column) — this tracks the
+       26.7° tilt and spin exactly, so the shadow band never falls 90° off. The
+       ring centre coincides with Saturn's centre at the world origin. */
+    vec3.set(ringNormal, satM[8], satM[9], satM[10]);
+    vec3.normalize(ringNormal, ringNormal);
+    gl.uniform3fv(U.u_RingNormal, ringNormal);
+    gl.uniform3fv(U.u_RingCenter, [0, 0, 0]);
+    gl.uniform1f (U.u_RingInner,  ringInner);
+    gl.uniform1f (U.u_RingOuter,  ringOuter);
+    gl.uniform1f (U.u_RingShadowStr, 0.9);
+    bindTex(gl, gl.TEXTURE3, gl.TEXTURE_2D, ringAlphaTex, U.u_RingAlphaTex, 3);
 
     const encM = mat4.create();
     mat4.rotateY (encM, encM, t * 0.70);

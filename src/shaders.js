@@ -150,6 +150,21 @@ uniform float u_OccluderR;
 uniform vec3  u_Occluder2Center;
 uniform float u_Occluder2R;
 
+/* Translucent ring shadow — the rings are a thin annulus in Saturn's
+   equatorial plane and partly block sunlight, casting a soft banded shadow
+   onto Saturn's body and (occasionally) onto Enceladus. We project the
+   fragment toward the sun onto the ring plane and look up the ring's radial
+   opacity. u_RingNormal is the plane normal in WORLD space (derived from the
+   model matrix's local +Z axis, so it stays correct as Saturn spins/tilts —
+   this is what previously fell 90° off when the spin axis was used instead). */
+uniform float     u_RingShadowOn;   // 1 = receive ring shadow (body/moon), 0 = the rings themselves
+uniform vec3      u_RingNormal;      // world-space unit normal of the ring plane
+uniform vec3      u_RingCenter;      // world-space ring centre (= Saturn centre)
+uniform float     u_RingInner;       // world-space inner radius of the ring annulus
+uniform float     u_RingOuter;       // world-space outer radius of the ring annulus
+uniform sampler2D u_RingAlphaTex;    // radial opacity strip (alpha = ring opacity vs radius)
+uniform float     u_RingShadowStr;   // overall shadow strength (0..1)
+
 uniform vec3 u_Cam;
 out vec4 outColor;
 
@@ -163,6 +178,22 @@ bool inShadowOf(vec3 p, vec3 L, vec3 center, float r) {
   float c    = dot(oc, oc) - r * r;
   float disc = b * b - c;
   return b < 0.0 && c > 0.0 && disc >= 0.0;
+}
+
+/* Ray-plane ring shadow: intersect the ray fragment->sun with the ring plane.
+   If the hit lands inside the annulus, return the ring opacity at that radius
+   (0 = no shadow). s<=0 means the ring plane lies behind the fragment relative
+   to the sun, so it cannot occlude — no shadow. */
+float ringShadow(vec3 p, vec3 L) {
+  if (u_RingShadowOn < 0.5) return 0.0;
+  float denom = dot(L, u_RingNormal);
+  if (abs(denom) < 1e-4) return 0.0;                       // ray parallel to ring plane
+  float s = dot(u_RingCenter - p, u_RingNormal) / denom;
+  if (s <= 0.0) return 0.0;                                // plane is away from the sun
+  float rho = length((p + s * L) - u_RingCenter);
+  if (rho < u_RingInner || rho > u_RingOuter) return 0.0;  // misses the annulus
+  float u = (rho - u_RingInner) / (u_RingOuter - u_RingInner);
+  return texture(u_RingAlphaTex, vec2(u, 0.5)).a;
 }
 
 void main() {
@@ -198,9 +229,14 @@ void main() {
     (inShadowOf(v_Wpos, L, u_OccluderCenter,  u_OccluderR) ||
      inShadowOf(v_Wpos, L, u_Occluder2Center, u_Occluder2R)) ? 0.0 : 1.0;
 
+  /* Translucent ring shadow attenuates the direct light (ambient survives, so
+     shadowed regions stay faintly lit by starlight). */
+  float ringLit = 1.0 - ringShadow(v_Wpos, L) * u_RingShadowStr;
+  float lit     = shadowFactor * ringLit;
+
   vec3 ambient  = 0.08 * u_LCol * base;
-  vec3 diffuse  = diff * shadowFactor * u_LCol * base;
-  vec3 specular = spec * shadowFactor * u_LCol * specCol;
+  vec3 diffuse  = diff * lit * u_LCol * base;
+  vec3 specular = spec * lit * u_LCol * specCol;
   vec3 col = ambient + diffuse + specular;
 
   /* Environment Mapping (Advanced 3/5) — star cubemap reflections */
