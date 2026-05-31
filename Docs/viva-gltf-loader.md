@@ -199,12 +199,21 @@ for (const prim of meshDef.primitives) {
   const uv   = attrs.TEXCOORD_0 != null
     ? Float32Array.from(readAccessor(json, bin, attrs.TEXCOORD_0))
     : null;
+  const uv2  = attrs.TEXCOORD_1 != null
+    ? Float32Array.from(readAccessor(json, bin, attrs.TEXCOORD_1))
+    : null;
   ...
 }
 ```
 
-`prim.attributes` is a dictionary: `{ POSITION: 4, NORMAL: 5, TEXCOORD_0: 6 }`.
+`prim.attributes` is a dictionary: `{ POSITION: 4, NORMAL: 5, TEXCOORD_0: 6, TEXCOORD_1: 7 }`.
 Values are accessor indices. `readAccessor` is called for each.
+
+**Why two UV sets?** All 53 primitives in `saturn.glb` carry both `TEXCOORD_0` (diffuse)
+and `TEXCOORD_1` (specular). The `KHR_materials_pbrSpecularGlossiness` material for the
+body and rings declares `texCoord: 1` on the spec-gloss slot, meaning those maps were
+painted against the second UV layout. If only `TEXCOORD_0` were loaded, the spec map
+would be sampled with the diffuse UVs — producing incorrect, arbitrary-looking highlights.
 
 If a mesh has no normals (unusual but legal GLTF), a zero-filled array of the
 same length is substituted — the shader will get N=(0,0,0) which is incorrect
@@ -232,13 +241,23 @@ The `idxType` is stored on the mesh so `drawVAO()` can pass the right constant.
 The loader handles **two** GLTF material models:
 
 **KHR_materials_pbrSpecularGlossiness** (extension, used by the Saturn GLB):
-- `diffuseFactor` → base color (RGBA)
-- `diffuseTexture` → diffuse map (index into `json.textures`)
-- `specularGlossinessTexture` → packed RGB=specular, A=glossiness
+- `diffuseFactor` → base color (RGBA) → `mesh.color` / `mesh.opacity`
+- `diffuseTexture` → diffuse map → `mesh.image`
+- `specularGlossinessTexture` → packed RGB=specular, A=glossiness → `mesh.specImage`
+- `specularGlossinessTexture.texCoord` → which UV set to sample (0 or 1) → `mesh.specUV`
+- `specularFactor` → RGB multiplier on the spec map's colour → `mesh.specFactor`
+- `glossinessFactor` → multiplier on the spec map's alpha before → shininess → `mesh.glossFactor`
 
-**pbrMetallicRoughness** (core GLTF 2.0):
+The body (`saturn1_A`) has `specularFactor=[0.23,0.23,0.23]`, `glossinessFactor=1.0`.
+The rings (`saturn2_A`) have `specularFactor=[1,1,1]`, `glossinessFactor=0.5`.
+Both declare `texCoord: 1` on their spec map — they use `TEXCOORD_1`, not `TEXCOORD_0`.
+
+**pbrMetallicRoughness** (core GLTF 2.0, used by `enceladus.glb`):
 - `baseColorFactor` → base color
 - `baseColorTexture` → diffuse map
+
+The loader does not extract the metallic-roughness map from this path, so Enceladus
+has no `specImage` and falls back to the flat `u_SpecK` / `u_Shin` uniforms.
 
 Both paths resolve texture indices through `json.textures[].source` (an image
 index) into the pre-decoded `images[]` array, yielding an `HTMLImageElement`

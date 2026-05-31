@@ -91,7 +91,8 @@ export function makeVAO(gl, prog, mesh) {
   gl.bindVertexArray(vao);
 
   for (const [name, data, size] of [
-    ['a_Pos', mesh.pos, 3], ['a_Norm', mesh.norm, 3], ['a_UV', mesh.uv, 2]
+    ['a_Pos', mesh.pos, 3], ['a_Norm', mesh.norm, 3],
+    ['a_UV', mesh.uv, 2], ['a_UV2', mesh.uv2, 2]   // UV2 = TEXCOORD_1 (spec maps)
   ]) {
     if (!data) continue;
     const loc = gl.getAttribLocation(prog, name);

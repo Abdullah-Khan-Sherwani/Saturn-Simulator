@@ -274,20 +274,24 @@ This is the most complex shader. **Baseline + 3 advanced techniques.**
 ```glsl
 in vec3 v_Wpos;   // world-space position (from VS)
 in vec3 v_Norm;   // world-space normal (from VS)
-in vec2 v_UV;     // texture coordinates
+in vec2 v_UV;     // TEXCOORD_0 — diffuse UV set
+in vec2 v_UV2;    // TEXCOORD_1 — specular UV set (body + ring spec maps use this)
 
 uniform vec3  u_LDir;        // sun direction (normalised, pointing toward sun)
 uniform vec3  u_LCol;        // sun colour (warm white: 1.0, 0.97, 0.85)
 uniform vec3  u_Cam;         // camera world position
 uniform vec3  u_Base;        // fallback colour if no texture
-uniform float u_Shin;        // Phong shininess exponent
-uniform float u_SpecK;       // scalar specular coefficient
+uniform float u_Shin;        // Phong shininess exponent (fallback — no spec map)
+uniform float u_SpecK;       // scalar specular coefficient (fallback — no spec map)
 uniform float u_Alpha;       // opacity
 uniform bool  u_TexOn;       // use diffuse texture?
-uniform sampler2D u_Tex;     // diffuse texture
-uniform float u_AlphaCutoff; // discard threshold (unused here, 0.0)
-uniform bool  u_SpecTexOn;   // use specular texture?
+uniform sampler2D u_Tex;     // diffuse texture (sampled with v_UV / TEXCOORD_0)
+uniform float u_AlphaCutoff; // discard threshold (0.0 — ring transparency uses blending)
+uniform bool  u_SpecTexOn;   // use specular-glossiness texture?
 uniform sampler2D u_SpecTex; // specular-glossiness texture
+uniform float u_SpecUV;      // which UV set to sample spec map with: 0=v_UV, 1=v_UV2
+uniform vec3  u_SpecFactor;  // KHR specularFactor — scales the map's RGB specular colour
+uniform float u_GlossFactor; // KHR glossinessFactor — scales the map's alpha before → shininess
 uniform samplerCube u_EnvMap; // cubemap for reflections
 uniform float u_EnvStr;      // reflection strength
 uniform float u_FogDensity;  // fog density coefficient
@@ -353,22 +357,28 @@ is the angle between the surface normal and the light direction.
 
 ```glsl
 if (u_SpecTexOn) {
-  vec4 sg   = texture(u_SpecTex, v_UV);
-  specCol   = sg.rgb;          // per-texel specular colour
-  shininess = sg.a * 255.0 + 1.0;  // glossiness → shininess exponent
+  vec2 sUV  = (u_SpecUV > 0.5) ? v_UV2 : v_UV;   // body+ring spec → UV1; others → UV0
+  vec4 sg   = texture(u_SpecTex, sUV);
+  specCol   = sg.rgb * u_SpecFactor;               // per-texel colour × material specularFactor
+  shininess = sg.a * u_GlossFactor * 255.0 + 1.0; // per-texel gloss × glossinessFactor → exponent
 } else {
-  specCol   = vec3(u_SpecK);
+  specCol   = vec3(u_SpecK);   // flat fallback (Enceladus, haze ring)
   shininess = u_Shin;
 }
 float spec = pow(max(dot(N, H), 0.0), shininess);
 ```
 
-**`KHR_materials_pbrSpecularGlossiness`** packs RGB specular colour and A
-glossiness in one texture. Glossiness is stored as 0–1 normalised; multiplying
-by 255 and adding 1 converts to a usable shininess exponent (1 to 256).
+**`KHR_materials_pbrSpecularGlossiness`** packs RGB specular colour and A glossiness
+in one texture. Both are scaled by the material's `specularFactor` / `glossinessFactor`
+before use — these come from the GLB and are passed as `u_SpecFactor` / `u_GlossFactor`.
 
-`pow(dot(N,H), shininess)` — the Phong specular term. Larger shininess =
-tighter, shinier highlight (metals). Smaller = broad, diffuse-like highlight.
+**Two UV sets:** the Saturn body's and ring's spec maps are authored against `TEXCOORD_1`
+(the second UV channel), not the diffuse `TEXCOORD_0`. `u_SpecUV` selects which varying
+(`v_UV` or `v_UV2`) to sample the spec map with. Sampling with the wrong UV set would
+map the spec texture incorrectly onto the geometry.
+
+`pow(dot(N,H), shininess)` — the Blinn-Phong specular term. Larger shininess =
+tighter, shinier highlight. Smaller = broad, diffuse-like highlight.
 
 ### Analytical Planetary Shadow (helper at lines 174–181, test at lines 228–230)
 

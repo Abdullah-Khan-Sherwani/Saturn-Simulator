@@ -225,7 +225,8 @@ reads depth but doesn't write), the GPU's depth test naturally handles occlusion
 const U = cacheUniforms(gl, planetProg, [
   'u_MVP','u_M','u_N','u_LDir','u_LCol','u_Base','u_Cam',
   'u_Shin','u_SpecK','u_Alpha','u_TexOn','u_Tex','u_AlphaCutoff',
-  'u_SpecTexOn','u_SpecTex','u_UVRepeat','u_UVOffset',
+  'u_SpecTexOn','u_SpecTex','u_SpecUV','u_SpecFactor','u_GlossFactor',
+  'u_UVRepeat','u_UVOffset',
   'u_EnvMap','u_EnvStr','u_FogDensity','u_FogColor','u_OccluderCenter','u_OccluderR',
   'u_Occluder2Center','u_Occluder2R',
   'u_RingShadowOn','u_RingNormal','u_RingCenter','u_RingInner','u_RingOuter',
@@ -233,8 +234,13 @@ const U = cacheUniforms(gl, planetProg, [
 ]);
 ```
 
-31 uniforms cached at startup. Every frame that calls `gl.uniform*()` uses these
+34 uniforms cached at startup. Every frame that calls `gl.uniform*()` uses these
 pre-fetched integer locations — no string lookups per frame.
+
+The three spec-map uniforms (`u_SpecUV`, `u_SpecFactor`, `u_GlossFactor`) are set
+per-mesh inside `drawMesh`: the body uses UV1, `specularFactor=0.23`, `glossFactor=1.0`;
+the ring uses UV1, `specularFactor=1.0`, `glossFactor=0.5` — all sourced directly from
+the GLB material, not hard-coded.
 
 The ring shadow uniforms (last 7):
 - `u_RingShadowOn` — flag: `1.0` for bodies/moons that receive a shadow, `0.0` for
