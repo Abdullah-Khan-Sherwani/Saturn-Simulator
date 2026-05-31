@@ -1,9 +1,9 @@
 import { mat4, mat3, vec3 } from 'gl-matrix';
 import { mkProg, makeVAO, glBuf, glTex2D, glTexCubeFromImages,
          mkRenderTarget, freeRenderTarget, drawVAO, cacheUniforms, bindTex } from './gl-utils.js';
-import { loadImage, loadCubemapFaces, makeUvSphere, boundsOf } from './geometry.js';
+import { loadImage, loadCubemapFaces, boundsOf } from './geometry.js';
 import { loadGLTF, extractMeshes } from './gltf-loader.js';
-import { SKYBOX_VS, SKYBOX_FS, SUN_VS, SUN_FS, POST_VS,
+import { SKYBOX_VS, SKYBOX_FS, POST_VS,
          BRIGHT_FS, BLUR_FS, COMPOSITE_FS, PLANET_VS, PLANET_FS } from './shaders.js';
 
 const ENC_ORBIT_R = 15;
@@ -47,7 +47,6 @@ async function main() {
 
   /* ── Programs ──────────────────────────────────────────────────────────── */
   const skyProg    = mkProg(gl, SKYBOX_VS,  SKYBOX_FS);
-  const sunProg    = mkProg(gl, SUN_VS,     SUN_FS);
   const planetProg = mkProg(gl, PLANET_VS,  PLANET_FS);
   const brightProg = mkProg(gl, POST_VS,    BRIGHT_FS);
   const blurProg   = mkProg(gl, POST_VS,    BLUR_FS);
@@ -64,11 +63,8 @@ async function main() {
   gl.bindVertexArray(null);
 
   /* ── Textures ──────────────────────────────────────────────────────────── */
-  const [satBodyImg, sunImg] = await Promise.all([
-    loadImage('/8k_saturn.jpg'), loadImage('/8k_sun.jpg'),
-  ]);
+  const satBodyImg = await loadImage('/8k_saturn.jpg');
   const satBodyTex = glTex2D(gl, satBodyImg);
-  const sunTex     = glTex2D(gl, sunImg);
 
   const satGPU     = satMeshes.map(m => makeVAO(gl, planetProg, m));
   const satTex     = satMeshes.map(m =>
@@ -95,16 +91,15 @@ async function main() {
     'u_Shin','u_SpecK','u_Alpha','u_TexOn','u_Tex','u_AlphaCutoff',
     'u_SpecTexOn','u_SpecTex','u_UVRepeat','u_UVOffset',
     'u_EnvMap','u_EnvStr','u_FogDensity','u_FogColor','u_OccluderCenter','u_OccluderR',
+    'u_Occluder2Center','u_Occluder2R',
   ]);
-  const SkyU   = cacheUniforms(gl, skyProg,    ['u_Skybox','u_InvViewProj','u_Cam']);
-  const SunU   = cacheUniforms(gl, sunProg,    ['u_MVP','u_Tex','u_Intensity']);
+  const SkyU   = cacheUniforms(gl, skyProg,    ['u_Skybox','u_InvViewProj','u_Cam','u_SunDir','u_SunCol']);
   const BrightU = cacheUniforms(gl, brightProg, ['u_Img','u_Threshold']);
   const BlurU   = cacheUniforms(gl, blurProg,   ['u_Img','u_Texel','u_Dir']);
   const CompU   = cacheUniforms(gl, compProg,   ['u_Scene','u_Bloom','u_Strength']);
 
   /* ── Scene constants ───────────────────────────────────────────────────── */
   const spaceCubemap = glTexCubeFromImages(gl, await loadCubemapFaces('/cubemap_starmap_2020_1024'));
-  const sunGPU = makeVAO(gl, sunProg, makeUvSphere(1.0, 24, 48));
 
   const satBodyMesh   = satMeshes.find(m => !isRing(m)) ?? satMeshes[0];
   const eB = boundsOf(encMeshes[0].pos);
@@ -114,7 +109,6 @@ async function main() {
   const satBodyRadius = sS * sB.r;
 
   const SUN_DIR = vec3.normalize(vec3.create(), SUN_DIR_RAW);
-  const SUN_POS = vec3.scale(vec3.create(), SUN_DIR, 4000.0);
 
   /* ── View mode ─────────────────────────────────────────────────────────── */
   let viewMode = 'saturn', satCamR = 22.0, encCamR = 3.0;
@@ -243,18 +237,12 @@ async function main() {
     gl.useProgram(skyProg);
     bindTex(gl, gl.TEXTURE1, gl.TEXTURE_CUBE_MAP, spaceCubemap, SkyU.u_Skybox, 1);
     gl.uniformMatrix4fv(SkyU.u_InvViewProj, false, invVP);
-    gl.uniform3fv(SkyU.u_Cam, camPos);
+    gl.uniform3fv(SkyU.u_Cam,    camPos);
+    gl.uniform3fv(SkyU.u_SunDir, SUN_DIR);   // sun disk + halo are drawn in the skybox now
+    gl.uniform3fv(SkyU.u_SunCol, SUN_COL);
     gl.bindVertexArray(quadVAO); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-    gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.disable(gl.BLEND);
-    gl.useProgram(sunProg);
-    const sunM = mat4.create();
-    mat4.translate(sunM, sunM, SUN_POS); mat4.scale(sunM, sunM, [8, 8, 8]);
-    gl.uniformMatrix4fv(SunU.u_MVP, false, mat4.multiply(mat4.create(), vp, sunM));
-    bindTex(gl, gl.TEXTURE0, gl.TEXTURE_2D, sunTex, SunU.u_Tex, 0);
-    gl.uniform1f(SunU.u_Intensity, 2.4);
-    drawVAO(gl, sunGPU);
-
+    gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL);
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(planetProg);
     gl.uniform3fv(U.u_LDir, SUN_DIR);
@@ -282,19 +270,22 @@ async function main() {
        Enceladus depth lands in the buffer before rings are drawn, so the rings
        correctly occlude Enceladus when it is behind them. */
 
-    /* 1. Saturn body — opaque */
+    /* 1. Saturn body — opaque, eclipsed by Enceladus */
     gl.uniform1f(U.u_Shin, 20.0); gl.uniform1f(U.u_SpecK, 0.10);
     gl.uniform3fv(U.u_OccluderCenter, encWorld); gl.uniform1f(U.u_OccluderR, 0.42);
+    gl.uniform1f(U.u_Occluder2R, 0.0);                                          // 2nd slot unused
     renderGroup(satBodyGPU, satBodyMeshes, satBdyTex, satBodySpec, satM, 0.02);
 
-    /* 2. Enceladus — opaque, depth written before rings are drawn */
+    /* 2. Enceladus — opaque, depth written before rings are drawn, eclipsed by Saturn */
     gl.uniform1f(U.u_Shin, 52.0); gl.uniform1f(U.u_SpecK, 0.65);
     gl.uniform3fv(U.u_OccluderCenter, [0, 0, 0]); gl.uniform1f(U.u_OccluderR, satBodyRadius);
+    gl.uniform1f(U.u_Occluder2R, 0.0);                                          // 2nd slot unused
     renderGroup(encGPU, encMeshes, encTex, encSpecTex, encM, 0.18);
 
-    /* 3. Saturn rings — Saturn body sphere occludes the rings on its dark side */
+    /* 3. Saturn rings — shadowed by BOTH Saturn's body (broad band) and Enceladus (small dot) */
     gl.uniform1f(U.u_Shin, 20.0); gl.uniform1f(U.u_SpecK, 0.10);
-    gl.uniform3fv(U.u_OccluderCenter, [0, 0, 0]); gl.uniform1f(U.u_OccluderR, satBodyRadius);
+    gl.uniform3fv(U.u_OccluderCenter,  [0, 0, 0]); gl.uniform1f(U.u_OccluderR,  satBodyRadius);
+    gl.uniform3fv(U.u_Occluder2Center, encWorld);  gl.uniform1f(U.u_Occluder2R, 0.42);
     renderGroup(satRingGPU, satRingMeshes, satRingTex, satRingSpec, satM, 0.02);
     gl.depthMask(true); /* rings leave depthMask=false; restore so next frame's gl.clear works */
 

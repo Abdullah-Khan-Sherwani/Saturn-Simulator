@@ -22,13 +22,12 @@ Wraps the browser's native image decoder in a Promise so it can be
 `await`-ed. Setting `img.src` starts an HTTP GET; the browser fires
 `onload` when the JPEG/PNG is fully decoded into an `HTMLImageElement`.
 
-`saturn.js` calls this for the 8K Saturn and Sun textures:
+`saturn.js` calls this for the 8K Saturn body texture:
 ```js
-const [satBodyImg, sunImg] = await Promise.all([
-  loadImage('/8k_saturn.jpg'), loadImage('/8k_sun.jpg'),
-]);
+const satBodyImg = await loadImage('/8k_saturn.jpg');
 ```
-`Promise.all` fires both requests simultaneously — no serial waiting.
+(The sun used to be loaded here too, but it is now drawn procedurally in the
+skybox shader, so `8k_sun.jpg` is no longer fetched.)
 
 ---
 
@@ -59,9 +58,11 @@ All six are loaded in parallel. The returned array order matches the order
 
 ## `makeUvSphere(radius, latBands, lonBands)` — Lines 17–48
 
-This generates the procedural geometry for the **Sun** visual (a glowing sphere).
-Called with `makeUvSphere(1.0, 24, 48)` — radius 1, 24 latitude bands,
-48 longitude bands.
+A reusable routine that builds the procedural geometry for a UV sphere
+(`makeUvSphere(1.0, 24, 48)` = radius 1, 24 latitude bands, 48 longitude bands).
+It used to build the **Sun** sphere; the sun is now a procedural disk drawn in
+the skybox shader, so this routine is currently not called at runtime — but it
+remains a clean example of UV-sphere generation, a core graphics technique.
 
 ### Conceptual model
 

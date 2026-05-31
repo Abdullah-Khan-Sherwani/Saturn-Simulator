@@ -1,6 +1,6 @@
 # `src/shaders.js` — Deep-Dive Viva Guide
 
-> All GLSL ES 3.00 shader source code. Seven shaders across five programs.
+> All GLSL ES 3.00 shader source code. Eight shader sources across five programs.
 > Covers the baseline Phong model plus three advanced techniques:
 > Environment Mapping (3/5), Fog (2/5), Gamma Correction (2/5).
 
@@ -10,12 +10,18 @@
 
 | Program | VS | FS | Purpose |
 |---|---|---|---|
-| `skyProg` | `SKYBOX_VS` | `SKYBOX_FS` | Full-screen cubemap background |
-| `sunProg` | `SUN_VS` | `SUN_FS` | Emissive sun sphere with tone mapping |
+| `skyProg` | `SKYBOX_VS` | `SKYBOX_FS` | Full-screen cubemap background **+ procedural sun disk + halo** |
 | `planetProg` | `PLANET_VS` | `PLANET_FS` | Saturn, rings, Enceladus — full Phong + advanced |
 | `brightProg` | `POST_VS` | `BRIGHT_FS` | Bloom pass 1: bright-region extraction |
 | `blurProg` | `POST_VS` | `BLUR_FS` | Bloom pass 2–3: separable Gaussian blur |
 | `compProg` | `POST_VS` | `COMPOSITE_FS` | Bloom pass 4: additive composite |
+
+> **Note on the sun.** Earlier revisions drew the sun as a separate textured
+> sphere (`sunProg` with `SUN_VS`/`SUN_FS` + an exponential tone curve). It is
+> now drawn procedurally inside `SKYBOX_FS` as a bright disk plus a wide halo
+> (ported from the ray-tracer branch), because a large saturated highlight
+> feeds the bloom far better than a small textured sphere. The `8k_sun.jpg`
+> texture and the sun sphere geometry are no longer used.
 
 ---
 
@@ -48,17 +54,23 @@ geometry that was drawn earlier.
 distance. Drawing it as a full-screen quad that reconstructs ray directions
 in the FS is simpler and avoids precision issues from very large geometry.
 
-### `SKYBOX_FS` — Lines 11–23
+### `SKYBOX_FS` — Lines 11–33
 
 ```glsl
 uniform samplerCube u_Skybox;
 uniform mat4 u_InvViewProj;
 uniform vec3 u_Cam;
+uniform vec3 u_SunDir;   // normalised direction TOWARD the sun
+uniform vec3 u_SunCol;
 void main() {
   vec4 farPos = u_InvViewProj * vec4(v_Ndc, 1.0, 1.0);
   vec3 world  = farPos.xyz / max(farPos.w, 1e-6);
   vec3 dir    = normalize(world - u_Cam);
-  outColor    = vec4(texture(u_Skybox, dir).rgb, 1.0);
+  vec3 stars  = texture(u_Skybox, dir).rgb;
+  float d   = dot(dir, u_SunDir);
+  vec3  sun = u_SunCol * (smoothstep(0.9994, 0.9998, d) * 6.0
+                        + pow(max(d, 0.0), 900.0) * 1.5);
+  outColor  = vec4(stars + pow(sun, vec3(1.0 / 2.2)), 1.0);
 }
 ```
 
@@ -76,39 +88,29 @@ void main() {
 face based on the dominant component of `dir`, then bilinearly samples within
 that face.
 
----
+**Procedural sun disk + halo (the bloom source).** `d = dot(dir, u_SunDir)`
+is the cosine of the angle between the view ray and the direction toward the
+sun: `d → 1` when looking straight at the sun. Two terms build the sun:
+- **`smoothstep(0.9994, 0.9998, d) * 6.0`** — a hard, bright disk (~2° radius).
+  The value `6.0` is well above 1.0, so the core saturates to pure white.
+- **`pow(max(d, 0.0), 900.0) * 1.5`** — a wide, soft halo. A high power of a
+  cosine gives a smooth falloff that fades over several degrees.
 
-## Sun Shaders
+`pow(sun, 1/2.2)` gamma-corrects the sun term to match the gamma applied to the
+planets (the framebuffer is 8-bit, so the bright core clamps to white). Because
+the disk is large and saturated and the halo grades smoothly down through the
+bloom threshold, the bright-extract + blur passes turn it into a strong, soft
+glow — far more convincing than the old small textured sun sphere.
 
-### `SUN_VS` — Lines 25–33
-
-Standard MVP transform. Passes through UV coordinates unchanged. No lighting
-computations in the VS; emissive objects don't need normals.
-
-### `SUN_FS` — Lines 35–45
-
-```glsl
-void main() {
-  vec3 tex = texture(u_Tex, v_UV).rgb;
-  vec3 col = vec3(1.0) - exp(-tex * u_Intensity);
-  outColor = vec4(col, 1.0);
-}
-```
-
-**Tone mapping — Reinhard-like exposure:** `1 - exp(-x * intensity)` is the
-**exponential tone mapping operator**. It maps HDR linear values to [0,1]:
-- Low values: near-linear response (dark areas stay dark)
-- High values: compressed toward 1.0 (prevents clipping/burning)
-
-With `u_Intensity = 2.4`, the sun texture's colours are amplified before
-compression, making it appear brilliantly bright. The formula is the same
-family as film exposure response curves.
+> **Occlusion:** the skybox is drawn first with the depth test disabled (it
+> writes no depth), so Saturn, the rings, and Enceladus — drawn afterward with
+> the depth test on — correctly paint over the sun where they overlap it.
 
 ---
 
 ## Post-Processing Vertex Shader
 
-### `POST_VS` — Lines 47–53
+### `POST_VS` — Lines 35–41
 
 ```glsl
 in vec2 a_Pos;
@@ -127,7 +129,7 @@ Converts NDC coordinates (-1 to 1) to UV coordinates (0 to 1):
 
 ## Bloom: Bright Extraction
 
-### `BRIGHT_FS` — Lines 55–67
+### `BRIGHT_FS` — Lines 43–55
 
 ```glsl
 void main() {
@@ -159,7 +161,7 @@ are non-black.
 
 ## Bloom: Separable Gaussian Blur
 
-### `BLUR_FS` — Lines 69–83
+### `BLUR_FS` — Lines 57–71
 
 ```glsl
 uniform vec2 u_Texel;   // (1/width, 1/height)
@@ -198,7 +200,7 @@ for (let i = 0; i < 6; i++) {
 
 ## Bloom: Composite
 
-### `COMPOSITE_FS` — Lines 85–96
+### `COMPOSITE_FS` — Lines 73–84
 
 ```glsl
 void main() {
@@ -215,7 +217,7 @@ contribution is visually noticeable.
 
 ---
 
-## Planet Vertex Shader (`PLANET_VS`) — Lines 98–119
+## Planet Vertex Shader (`PLANET_VS`) — Lines 86–99
 
 ```glsl
 in vec3 a_Pos;
@@ -263,7 +265,7 @@ this to tile their texture radially. Default is `uvRepeat=[1,1], uvOffset=[0,0]`
 
 ---
 
-## Planet Fragment Shader (`PLANET_FS`) — Lines 127–223
+## Planet Fragment Shader (`PLANET_FS`) — Lines 115–218
 
 This is the most complex shader. **Baseline + 3 advanced techniques.**
 
@@ -290,11 +292,13 @@ uniform samplerCube u_EnvMap; // cubemap for reflections
 uniform float u_EnvStr;      // reflection strength
 uniform float u_FogDensity;  // fog density coefficient
 uniform vec3  u_FogColor;    // deep space fog colour
-uniform vec3  u_OccluderCenter; // shadow occluder sphere center
-uniform float u_OccluderR;      // occluder sphere radius (0=disabled)
+uniform vec3  u_OccluderCenter;  // shadow occluder sphere #1 center
+uniform float u_OccluderR;       // occluder #1 radius (0=disabled)
+uniform vec3  u_Occluder2Center; // shadow occluder sphere #2 center
+uniform float u_Occluder2R;      // occluder #2 radius (0=disabled)
 ```
 
-### Diffuse Texture Fetch + Alpha Discard (lines 166–168)
+### Diffuse Texture Fetch + Alpha Discard (lines 169–171)
 
 ```glsl
 vec4 texel = u_TexOn ? texture(u_Tex, v_UV) : vec4(u_Base, 1.0);
@@ -306,7 +310,7 @@ vec3 base = texel.rgb;
 Equivalent to setting the fragment as fully transparent. Used for alpha-tested
 geometry (ring transparency is handled differently via blending, not discard).
 
-### Phong Lighting Vectors (lines 170–174)
+### Phong Lighting Vectors (lines 173–176)
 
 ```glsl
 vec3 N = normalize(gl_FrontFacing ? v_Norm : -v_Norm);
@@ -326,7 +330,7 @@ It's an approximation but cheaper and produces a more physically plausible
 highlight shape. The two give the same result when the view and light are
 coplanar with the normal.
 
-### Phong Diffuse (line 175)
+### Phong Diffuse (line 178)
 
 ```glsl
 float diff = max(dot(N, L), 0.0);
@@ -336,7 +340,7 @@ Lambert's cosine law: light intensity is proportional to `cos(θ)` where θ
 is the angle between the surface normal and the light direction.
 `max(..., 0.0)` clamps to zero when the light is behind the surface (θ > 90°).
 
-### Specular Texture / Scalar Specular (lines 178–188)
+### Specular Texture / Scalar Specular (lines 183–192)
 
 ```glsl
 if (u_SpecTexOn) {
@@ -357,30 +361,37 @@ by 255 and adding 1 converts to a usable shininess exponent (1 to 256).
 `pow(dot(N,H), shininess)` — the Phong specular term. Larger shininess =
 tighter, shinier highlight (metals). Smaller = broad, diffuse-like highlight.
 
-### Analytical Planetary Shadow (lines 191–203)
+### Analytical Planetary Shadow (helper at lines 159–166, test at 197–199)
+
+The ray-sphere test lives in a reusable helper so a fragment can be tested
+against **two** occluders:
 
 ```glsl
-float shadowFactor = 1.0;
-if (u_OccluderR > 0.0) {
-  vec3  oc   = v_Wpos - u_OccluderCenter;
+bool inShadowOf(vec3 p, vec3 L, vec3 center, float r) {
+  if (r <= 0.0) return false;            // unused occluder slot
+  vec3  oc   = p - center;
   float b    = dot(oc, L);
-  float c    = dot(oc, oc) - u_OccluderR * u_OccluderR;
+  float c    = dot(oc, oc) - r * r;
   float disc = b * b - c;
-  if (b < 0.0 && c > 0.0 && disc >= 0.0) shadowFactor = 0.0;
+  return b < 0.0 && c > 0.0 && disc >= 0.0;
 }
+...
+float shadowFactor =
+  (inShadowOf(v_Wpos, L, u_OccluderCenter,  u_OccluderR) ||
+   inShadowOf(v_Wpos, L, u_Occluder2Center, u_Occluder2R)) ? 0.0 : 1.0;
 ```
 
 **Ray-sphere intersection test — hardcoded shadow.** This is not shadow
 mapping; it's an analytical test: "does the ray from this fragment toward
 the sun intersect the occluder sphere?"
 
-The ray is `P(t) = v_Wpos + t * L`. Substituting into the sphere equation
+The ray is `P(t) = p + t * L`. Substituting into the sphere equation
 `|P - center|² = R²` gives a quadratic in `t`:
 
 ```
 |oc + t*L|² = R²
 t² + 2t·dot(oc,L) + dot(oc,oc) - R² = 0
-  where oc = v_Wpos - center
+  where oc = p - center
 ```
 
 Using the quadratic formula with `a=1` (because L is normalised, `dot(L,L)=1`):
@@ -393,10 +404,19 @@ Using the quadratic formula with `a=1` (because L is normalised, `dot(L,L)=1`):
 2. `b < 0.0` — the intersection is in the direction of the light (not behind)
 3. `c > 0.0` — the fragment is outside the sphere (it's not inside the occluder)
 
-If all three hold: `shadowFactor = 0.0` → no direct light.
+If either occluder satisfies all three: `shadowFactor = 0.0` → no direct light.
 Ambient is kept (`0.08 * u_LCol * base`) so shadowed regions stay faintly lit.
 
-### Phong Accumulation (lines 205–208)
+**Why two occluders?** `PLANET_FS` only supports an analytical shadow from a
+single sphere per draw call, but the rings need to be eclipsed by **both**
+Saturn's body (its broad shadow band across the rings) **and** Enceladus (a
+small shadow dot tracking across the rings as it orbits). `saturn.js` therefore
+fills slot #1 with Saturn's body and slot #2 with Enceladus for the ring draw;
+the Saturn-body and Enceladus draws use only slot #1 and disable slot #2 with
+`R = 0`. (A previous revision had a single slot and could show only one of the
+two shadows at a time.)
+
+### Phong Accumulation (lines 201–204)
 
 ```glsl
 vec3 ambient  = 0.08 * u_LCol * base;
@@ -409,7 +429,7 @@ Classic Phong: `ambient + diffuse + specular`. Shadow only suppresses diffuse
 and specular, not ambient — physically motivated (ambient represents indirect
 light bouncing from everywhere).
 
-### Advanced Technique 1: Environment Mapping (lines 210–213)
+### Advanced Technique 1: Environment Mapping (lines 207–210)
 
 ```glsl
 vec3 R_env   = reflect(-V, N);
@@ -431,7 +451,7 @@ strength. Specular colour is used as a mask: shiny regions reflect more.
 - Enceladus: `u_EnvStr = 0.18` (icy surface, more reflective)
 - Rings: `u_EnvStr = 0.04` (subtle sparkle)
 
-### Advanced Technique 2: Fog (lines 215–217)
+### Advanced Technique 2: Fog (lines 212–214)
 
 ```glsl
 float fogFactor = exp(-u_FogDensity * length(u_Cam - v_Wpos));
@@ -451,7 +471,7 @@ ambient colour, so far objects fade into the void rather than a white mist.
 `u_FogDensity = 0.013` — very low, so fog only affects very distant objects
 (Enceladus at 15 units from Saturn gets mild fog contribution).
 
-### Advanced Technique 3: Gamma Correction (lines 219–220)
+### Advanced Technique 3: Gamma Correction (lines 216–217)
 
 ```glsl
 col = pow(max(col, vec3(0.0)), vec3(1.0 / 2.2));
@@ -478,7 +498,7 @@ This converts from **linear colour space** to **sRGB display space**.
 |---|---|---|
 | Full-screen quad skybox, Z=0.9999 trick | `SKYBOX_VS` | `gl_Position = vec4(a_Pos, .9999, 1.0)` |
 | Inverse VP ray reconstruction | `SKYBOX_FS` | `u_InvViewProj * ndc → world → dir` |
-| Exponential tone mapping | `SUN_FS` | `1 - exp(-tex * intensity)` |
+| Procedural sun disk + halo (bloom source) | `SKYBOX_FS` | `smoothstep` disk + `pow(d,900)` halo |
 | NDC to UV conversion | `POST_VS` | `uv = pos * 0.5 + 0.5` |
 | Luminance with BT.709 coefficients | `BRIGHT_FS` | `dot(c, vec3(0.2126, 0.7152, 0.0722))` |
 | `smoothstep` soft threshold | `BRIGHT_FS` | Avoids hard bloom cutoff edge |
@@ -486,7 +506,7 @@ This converts from **linear colour space** to **sRGB display space**.
 | Normal matrix (not model matrix) | `PLANET_VS` | `u_N = transpose(inverse(M_3x3))` |
 | `gl_FrontFacing` for double-sided normals | `PLANET_FS` | Ring and interior rendering |
 | Blinn-Phong half-vector | `PLANET_FS` | `H = normalize(L + V)` |
-| Analytical ray-sphere shadow | `PLANET_FS` | Quadratic, `b < 0 && c > 0 && disc ≥ 0` |
+| Analytical ray-sphere shadow (two occluders) | `PLANET_FS` | `inShadowOf()`, `b < 0 && c > 0 && disc ≥ 0` |
 | Environment mapping with `reflect()` | `PLANET_FS` | `reflect(-V, N)` → cubemap sample |
 | Exponential fog | `PLANET_FS` | `exp(-density * dist)`, `mix()` |
 | Gamma correction | `PLANET_FS` | `pow(col, 1/2.2)` → sRGB output |

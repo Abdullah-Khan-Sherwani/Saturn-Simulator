@@ -1,20 +1,23 @@
 # `src/saturn.js` — Deep-Dive Viva Guide
 
 > The main entry point. Orchestrates everything: asset loading, GPU object
-> creation, camera control, and the 4-pass render loop. ~340 lines.
+> creation, camera control, and the 4-pass render loop. ~330 lines.
 
 ---
 
-## Module Imports (Lines 1–8)
+## Module Imports (Lines 1–7)
 
 ```js
 import { mat4, mat3, vec3 } from 'gl-matrix';
 import { mkProg, makeVAO, glBuf, glTex2D, glTexCubeFromImages,
          mkRenderTarget, freeRenderTarget, drawVAO, cacheUniforms, bindTex } from './gl-utils.js';
-import { loadImage, loadCubemapFaces, makeUvSphere, boundsOf } from './geometry.js';
+import { loadImage, loadCubemapFaces, boundsOf } from './geometry.js';
 import { loadGLTF, extractMeshes } from './gltf-loader.js';
 import { SKYBOX_VS, SKYBOX_FS, ... } from './shaders.js';
 ```
+
+> `makeUvSphere` (used to build the old sun sphere) and the `SUN_VS`/`SUN_FS`
+> shaders are no longer imported — the sun is now drawn in `SKYBOX_FS`.
 
 **`gl-matrix`** — a battle-tested JS math library for 4×4 matrices and 3D vectors.
 All matrix operations (`mat4.perspective`, `mat4.lookAt`, `mat4.multiply`,
@@ -103,23 +106,23 @@ The regex filter strips them out, keeping only Saturn body and rings.
 
 ---
 
-## Program Compilation (Lines 49–54)
+## Program Compilation (Lines 49–53)
 
 ```js
 const skyProg    = mkProg(gl, SKYBOX_VS,  SKYBOX_FS);
-const sunProg    = mkProg(gl, SUN_VS,     SUN_FS);
 const planetProg = mkProg(gl, PLANET_VS,  PLANET_FS);
 const brightProg = mkProg(gl, POST_VS,    BRIGHT_FS);
 const blurProg   = mkProg(gl, POST_VS,    BLUR_FS);
 const compProg   = mkProg(gl, POST_VS,    COMPOSITE_FS);
 ```
 
-Six programs. Note `POST_VS` is reused by `brightProg`, `blurProg`, and `compProg` —
-all post-processing passes use the same full-screen quad vertex shader.
+Five programs. Note `POST_VS` is reused by `brightProg`, `blurProg`, and `compProg` —
+all post-processing passes use the same full-screen quad vertex shader. (There is
+no longer a separate sun program; the sun is part of `skyProg`'s `SKYBOX_FS`.)
 
 ---
 
-## Full-Screen Quad VAO (Lines 57–64)
+## Full-Screen Quad VAO (Lines 56–63)
 
 ```js
 const quadVAO = gl.createVertexArray();
@@ -148,14 +151,11 @@ the 3-attribute `planetProg` layout.
 
 ---
 
-## Texture Upload (Lines 67–80)
+## Texture Upload (Lines 66–76)
 
 ```js
-const [satBodyImg, sunImg] = await Promise.all([
-  loadImage('/8k_saturn.jpg'), loadImage('/8k_sun.jpg'),
-]);
+const satBodyImg = await loadImage('/8k_saturn.jpg');
 const satBodyTex = glTex2D(gl, satBodyImg);
-const sunTex     = glTex2D(gl, sunImg);
 
 const satGPU     = satMeshes.map(m => makeVAO(gl, planetProg, m));
 const satTex     = satMeshes.map(m =>
@@ -163,13 +163,15 @@ const satTex     = satMeshes.map(m =>
 );
 ```
 
-Ring meshes use their own embedded GLB texture (`m.image`). Body meshes
-all share the single `satBodyTex` (the 8K Saturn photo). This is a texture
-atlas strategy: one 8K image for all non-ring geometry.
+Only the Saturn body texture (`8k_saturn.jpg`) is loaded here now — the sun is
+procedural so `8k_sun.jpg` is no longer fetched. Ring meshes use their own
+embedded GLB texture (`m.image`); body meshes all share the single `satBodyTex`
+(the 8K Saturn photo). This is a texture atlas strategy: one 8K image for all
+non-ring geometry.
 
 ---
 
-## Opaque/Transparent Pre-split (Lines 83–90)
+## Opaque/Transparent Pre-split (Lines 81–87)
 
 ```js
 const satBodyIdx  = satMeshes.map((_, i) => i).filter(i => !isRing(satMeshes[i]));
@@ -195,7 +197,7 @@ reads depth but doesn't write), the GPU's depth test naturally handles occlusion
 
 ---
 
-## Uniform Location Cache (Lines 93–103)
+## Uniform Location Cache (Lines 89–95)
 
 ```js
 const U = cacheUniforms(gl, planetProg, [
@@ -203,19 +205,21 @@ const U = cacheUniforms(gl, planetProg, [
   'u_Shin','u_SpecK','u_Alpha','u_TexOn','u_Tex','u_AlphaCutoff',
   'u_SpecTexOn','u_SpecTex','u_UVRepeat','u_UVOffset',
   'u_EnvMap','u_EnvStr','u_FogDensity','u_FogColor','u_OccluderCenter','u_OccluderR',
+  'u_Occluder2Center','u_Occluder2R',
 ]);
 ```
 
-22 uniforms for the planet shader cached at startup. Every frame that calls
-`gl.uniform*()` uses these pre-fetched locations — no string lookups per frame.
+24 uniforms for the planet shader cached at startup (the last two are the second
+shadow-occluder slot, used so the rings can be eclipsed by Saturn's body **and**
+Enceladus at once). Every frame that calls `gl.uniform*()` uses these pre-fetched
+locations — no string lookups per frame.
 
 ---
 
-## Scene Constants (Lines 105–118)
+## Scene Constants (Lines 102–111)
 
 ```js
 const spaceCubemap = glTexCubeFromImages(gl, await loadCubemapFaces('/cubemap_starmap_2020_1024'));
-const sunGPU = makeVAO(gl, sunProg, makeUvSphere(1.0, 24, 48));
 
 const satBodyMesh = satMeshes.find(m => !isRing(m)) ?? satMeshes[0];
 const eB = boundsOf(encMeshes[0].pos);
@@ -231,18 +235,18 @@ This is used as the occluder radius for the analytical shadow test.
 
 ```js
 const SUN_DIR = vec3.normalize(vec3.create(), SUN_DIR_RAW);
-const SUN_POS = vec3.scale(vec3.create(), SUN_DIR, 4000.0);
 ```
 
-`SUN_POS` places a visual sun sphere 4000 units away (near the far plane of
-8000). The sun direction `SUN_DIR` is used by the lighting shader — the sun
-is a directional light (infinitely far), so only direction matters for shading.
+The sun direction `SUN_DIR` is used both by the lighting shader (the sun is a
+directional light — infinitely far, so only direction matters for shading) and
+now by `SKYBOX_FS`, which draws the procedural sun disk/halo in that direction.
+There is no longer a sun-sphere GPU object or a `SUN_POS` world position.
 
 ---
 
-## Camera System (Lines 119–149)
+## Camera System (Lines 114–143)
 
-### View Mode Toggle (Lines 120–127)
+### View Mode Toggle (Lines 114–121)
 
 ```js
 let viewMode = 'saturn', satCamR = 22.0, encCamR = 3.0;
@@ -257,7 +261,7 @@ window.addEventListener('keydown', e => {
 Two view modes with separate orbit radii. Pressing `E` snaps the camera
 target from Saturn's origin `(0,0,0)` to Enceladus's current world position.
 
-### Arcball Orbit (Lines 130–148)
+### Arcball Orbit (Lines 124–142)
 
 ```js
 let camRx = 0.22, camRy = 0.0;
@@ -290,7 +294,7 @@ This is the **spherical coordinate → Cartesian** conversion:
 - Y: `R · sin(pitch)`
 - Z: `R · cos(yaw) · cos(pitch)`
 
-### Scroll Zoom (Lines 145–149)
+### Scroll Zoom (Lines 139–143)
 
 ```js
 canvas.addEventListener('wheel', e => {
@@ -306,7 +310,7 @@ required to call `e.preventDefault()` — which stops the page from scrolling.
 
 ---
 
-## Render Targets: Lazy Resize (Lines 155–162)
+## Render Targets: Lazy Resize (Lines 147–156)
 
 ```js
 let sceneRT = null, bloomA = null, bloomB = null, rtW = 0, rtH = 0;
@@ -331,7 +335,7 @@ are freed and new ones are allocated at the new size.
 
 ---
 
-## `renderGroup()` — Lines 165–210
+## `renderGroup()` — Lines 159–204
 
 ```js
 function renderGroup(gpuList, meshList, texList, specTexList, modelMat, envStrength) {
@@ -344,7 +348,7 @@ function renderGroup(gpuList, meshList, texList, specTexList, modelMat, envStren
 Sets the three transform matrices for an entire body (Saturn, Enceladus).
 Then iterates all meshes in the group, setting per-mesh uniforms and drawing.
 
-### Ring vs Body Render State (Lines 178–186)
+### Ring vs Body Render State (Lines 172–180)
 
 ```glsl
 if (ring) {
@@ -372,7 +376,7 @@ if (ring) {
   (alternating pixels of ring and body appear randomly). Polygon offset
   pushes ring depth values slightly further, ensuring body pixels always win.
 
-### Draw Order Within `renderGroup` (Lines 207–209)
+### Draw Order Within `renderGroup` (Lines 200–203)
 
 ```js
 gpuList.forEach((g, i) => { if (!isRing(meshList[i])) drawMesh(..., false); });
@@ -386,9 +390,9 @@ behind the planet body are correctly occluded.
 
 ---
 
-## Render Loop — `frame()` — Lines 213–331
+## Render Loop — `frame()` — Lines 208–326
 
-### Time and Orbits (Lines 214–221)
+### Time and Orbits (Lines 209–216)
 
 ```js
 t += 0.004;
@@ -400,7 +404,7 @@ const encWorld = [ENC_ORBIT_R * Math.cos(encAngle), 0, -ENC_ORBIT_R * Math.sin(e
 radians, giving it a smooth circular orbit in the XZ plane. World position:
 `x = R·cos(θ), z = -R·sin(θ)` (negative Z so the orbit goes the right way visually).
 
-### View/Projection Matrices (Lines 232–235)
+### View/Projection Matrices (Lines 226–229)
 
 ```js
 mat4.perspective(proj, Math.PI / 4, W / H, 0.1, 8000.0);
@@ -410,8 +414,9 @@ mat4.invert(invVP, vp);
 ```
 
 **Perspective matrix** — FOV = 45° (`π/4`), aspect = canvas width/height,
-near = 0.1, far = 8000. The far plane is 8000 to include the Sun sphere at
-distance 4000. Near = 0.1 for Enceladus close-up view.
+near = 0.1, far = 8000. The generous far plane keeps distant geometry within
+the frustum; near = 0.1 for the Enceladus close-up view. (The sun no longer
+needs the far plane — it is drawn at infinity in the skybox shader.)
 
 **`mat4.lookAt(view, eye, center, up)`** — constructs a view matrix that
 positions the camera at `camPos`, looking at `ctr`, with `+Y` as up.
@@ -419,20 +424,22 @@ positions the camera at `camPos`, looking at `ctr`, with `+Y` as up.
 **`invVP`** — the inverse of the VP matrix. Passed to `SKYBOX_FS` to
 reconstruct world-space rays from NDC fragment positions.
 
-### Pass 1: 3D Scene (Lines 237–299)
+### Pass 1: 3D Scene (Lines 231–290)
 
-**Skybox** — depth test disabled, LEQUAL depth function, full-screen quad.
-Drawn first so subsequent geometry overwrites it where it covers the skybox.
+**Skybox + sun** — depth test disabled, full-screen quad. Drawn first so
+subsequent geometry overwrites it where it covers the skybox. `SKYBOX_FS` now
+also draws the procedural sun disk + halo (given `u_SunDir` and `u_SunCol`),
+so there is no separate sun draw call. Because the skybox writes no depth, the
+planets and rings drawn afterward correctly paint over the sun where they
+overlap it.
 
-**Sun** — depth test enabled (LEQUAL), no blend, MVP-transformed sphere
-at `SUN_POS`, uniform scale 8 (radius 8 world units).
-
-**Planet rendering order:**
+**Planet rendering order** (each line sets its shadow occluder(s) before drawing):
 
 ```
-1. Saturn body    (opaque)    → writes depth
-2. Enceladus      (opaque)    → writes depth, occluded by Saturn body depth
-3. Saturn rings   (transparent) → reads depth (occluded by 1 & 2), alpha blended
+1. Saturn body    (opaque)      → writes depth; occluder = Enceladus
+2. Enceladus      (opaque)      → writes depth (occluded by Saturn body depth); occluder = Saturn body
+3. Saturn rings   (transparent) → reads depth (occluded by 1 & 2), alpha blended;
+                                   occluders = Saturn body (slot 1) + Enceladus (slot 2)
 ```
 
 At step 3:
@@ -443,7 +450,7 @@ Important: `gl.clear(gl.DEPTH_BUFFER_BIT)` at the start of the next frame
 requires `depthMask(true)`. If forgotten, the depth buffer wouldn't clear
 and the next frame's depth test would be wrong.
 
-### Saturn Model Matrix (Lines 267–271)
+### Saturn Model Matrix (Lines 255–259)
 
 ```js
 const satM = mat4.create();
@@ -462,7 +469,7 @@ order relative to the code (right-to-left multiplication):
 
 `26.7°` is Saturn's real axial tilt (compared to Earth's 23.5°).
 
-### Enceladus Model Matrix (Lines 273–279)
+### Enceladus Model Matrix (Lines 261–267)
 
 ```js
 const encM = mat4.create();
@@ -485,9 +492,11 @@ real tidal locking would have the same rate, but this is aesthetically better).
 
 `encWorld` (the JS-side orbit position) uses the same angle `t * 0.70` and
 the same radius, so it exactly matches where the matrix places Enceladus.
-`encWorld` is used as the occluder center for Saturn's shadow test.
+`encWorld` is fed as the occluder centre both when shading the Saturn body
+(Enceladus eclipsing Saturn) and as the rings' *second* occluder (Enceladus
+casting its small shadow onto the rings).
 
-### Pass 2: Bright Extraction (Lines 301–307)
+### Pass 2: Bright Extraction (Lines 292–298)
 
 ```js
 gl.bindFramebuffer(gl.FRAMEBUFFER, bloomA.fbo);
@@ -500,7 +509,7 @@ gl.bindVertexArray(quadVAO); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 Renders to `bloomA`. Source: `sceneRT.tex` (the 3D scene). Keeps only pixels
 brighter than 0.62.
 
-### Pass 3: Gaussian Blur (Lines 309–320)
+### Pass 3: Gaussian Blur (Lines 300–311)
 
 ```js
 gl.useProgram(blurProg);
@@ -527,7 +536,7 @@ size of one pixel in UV space, so the blur shader can step one pixel at a time.
 
 After the loop, `readTex` points to whichever buffer was last written.
 
-### Pass 4: Composite (Lines 322–329)
+### Pass 4: Composite (Lines 313–320)
 
 ```js
 gl.bindFramebuffer(gl.FRAMEBUFFER, null);   // render to screen
@@ -544,7 +553,7 @@ gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 Samples `sceneRT.tex` (sharp 3D scene) and `readTex` (blurred bloom).
 Adds them: `scene + bloom * 1.05`. The result appears on screen.
 
-### Animation Loop (Lines 331–332)
+### Animation Loop (Line 322)
 
 ```js
 requestAnimationFrame(frame);

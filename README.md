@@ -86,8 +86,9 @@ The table below lists every file the app loads at runtime, which ones are alread
 | `Assets/enceladus.glb` | `/enceladus.glb` | ✅ | 3.5 MB | Nothing |
 | `Assets/8k_saturn.jpg` | `/8k_saturn.jpg` | ✅ | — | Nothing |
 | `Assets/8k_saturn_ring_alpha.png` | `/8k_saturn_ring_alpha.png` | ✅ | — | Nothing |
-| `Assets/8k_sun.jpg` | `/8k_sun.jpg` | ✅ | — | Nothing |
 | `Assets/cubemap_starmap_2020_1024/px.png` … `nz.png` | `/cubemap_starmap_2020_1024/` | ✅ | 6 files | Nothing |
+
+> `8k_sun.jpg` is still in the repo but **no longer loaded** — the sun is now drawn procedurally in the skybox shader, so it needs no texture.
 
 > Vite's `publicDir` is set to `Assets/`, so every file in `Assets/` is served at the URL root automatically — no import statements needed.
 
@@ -191,7 +192,7 @@ Or deploy the `dist/` folder to any static host (Vercel, Netlify, GitHub Pages, 
 Saturn-Simulator/
 ├── src/
 │   ├── saturn.js          # Scene entry point: load, GPU setup, render loop
-│   ├── shaders.js         # All GLSL ES 3.00 shader sources (6 programs)
+│   ├── shaders.js         # All GLSL ES 3.00 shader sources (5 programs)
 │   ├── gl-utils.js        # WebGL 2.0 helpers — VAO, textures, FBOs, uniforms
 │   ├── geometry.js        # Procedural UV-sphere + image / cubemap loaders
 │   └── gltf-loader.js     # Pure GLB binary parser (no Three.js)
@@ -199,7 +200,7 @@ Saturn-Simulator/
 │   ├── cubemap_starmap_2020_1024/   # NASA/Gaia Milky Way cube faces (6 × PNG)
 │   ├── 8k_saturn.jpg                # 8K Saturn diffuse texture
 │   ├── 8k_saturn_ring_alpha.png     # Ring alpha mask
-│   ├── 8k_sun.jpg                   # Sun surface texture
+│   ├── 8k_sun.jpg                   # (legacy — sun is now procedural, file unused)
 │   ├── enceladus.glb                # Enceladus 3D model
 │   └── saturn.glb                   # Saturn 3D model (not tracked — too large)
 ├── Docs/
@@ -218,8 +219,7 @@ Saturn-Simulator/
 Frame N
   │
   ├─ Pass 1 ── Render to offscreen FBO  (colour + depth)
-  │               Skybox          full-screen quad, cubemap unproject
-  │               Sun sphere      emissive, tone-mapped
+  │               Skybox + sun    full-screen quad: cubemap + procedural sun disk/halo
   │               Saturn body     Phong + env map + fog + gamma
   │               Saturn rings    alpha-blended, depth-tested
   │               Enceladus       Phong + env map (high specular) + fog + gamma
@@ -238,8 +238,7 @@ Frame N
 
 | Program | Vertex | Fragment | Purpose |
 |---------|--------|----------|---------|
-| `skyProg` | `SKYBOX_VS` | `SKYBOX_FS` | Full-screen cubemap skybox |
-| `sunProg` | `SUN_VS` | `SUN_FS` | Emissive sun sphere |
+| `skyProg` | `SKYBOX_VS` | `SKYBOX_FS` | Full-screen cubemap skybox + procedural sun disk/halo |
 | `planetProg` | `PLANET_VS` | `PLANET_FS` | Phong + env map + fog + gamma |
 | `brightProg` | `POST_VS` | `BRIGHT_FS` | Bloom bright-region extract |
 | `blurProg` | `POST_VS` | `BLUR_FS` | Separable 5-tap Gaussian blur |

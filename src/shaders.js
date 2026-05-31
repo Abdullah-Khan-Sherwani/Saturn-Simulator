@@ -14,34 +14,22 @@ in  vec2 v_Ndc;
 uniform samplerCube u_Skybox;
 uniform mat4 u_InvViewProj;
 uniform vec3 u_Cam;
+uniform vec3 u_SunDir;   // normalised direction TOWARD the sun
+uniform vec3 u_SunCol;
 out vec4 outColor;
 void main() {
   vec4 farPos = u_InvViewProj * vec4(v_Ndc, 1.0, 1.0);
   vec3 world  = farPos.xyz / max(farPos.w, 1e-6);
   vec3 dir    = normalize(world - u_Cam);
-  outColor    = vec4(texture(u_Skybox, dir).rgb, 1.0);
-}`;
-
-export const SUN_VS = /* glsl */`#version 300 es
-in vec3 a_Pos;
-in vec2 a_UV;
-uniform mat4 u_MVP;
-out vec2 v_UV;
-void main() {
-  v_UV = a_UV;
-  gl_Position = u_MVP * vec4(a_Pos, 1.0);
-}`;
-
-export const SUN_FS = /* glsl */`#version 300 es
-precision highp float;
-in vec2 v_UV;
-uniform sampler2D u_Tex;
-uniform float     u_Intensity;
-out vec4 outColor;
-void main() {
-  vec3 tex = texture(u_Tex, v_UV).rgb;
-  vec3 col = vec3(1.0) - exp(-tex * u_Intensity);
-  outColor = vec4(col, 1.0);
+  vec3 stars  = texture(u_Skybox, dir).rgb;
+  /* Procedural sun disk + soft halo (ported from the ray-tracer branch).
+     A large pure-white disk plus a wide falloff feeds the bloom far better
+     than a small textured sphere. Gamma-corrected to match the rest of the
+     scene before it lands in the (8-bit) framebuffer. */
+  float d   = dot(dir, u_SunDir);
+  vec3  sun = u_SunCol * (smoothstep(0.9994, 0.9998, d) * 6.0
+                        + pow(max(d, 0.0), 900.0) * 1.5);
+  outColor  = vec4(stars + pow(sun, vec3(1.0 / 2.2)), 1.0);
 }`;
 
 export const POST_VS = /* glsl */`#version 300 es
@@ -152,15 +140,30 @@ uniform float       u_EnvStr;
 uniform float u_FogDensity;
 uniform vec3  u_FogColor;
 
-/* Analytical planetary shadow — occluder sphere (center + radius).
+/* Analytical planetary shadow — up to two occluder spheres (center + radius).
    Saturn shadowing Enceladus: center=origin, R=satBodyRadius.
    Enceladus shadowing Saturn: center=encWorldPos, R=encRadius.
-   R=0 disables the test. */
+   The rings use both slots: Saturn's body (broad shadow band) + Enceladus
+   (small shadow dot). R=0 disables that slot. */
 uniform vec3  u_OccluderCenter;
 uniform float u_OccluderR;
+uniform vec3  u_Occluder2Center;
+uniform float u_Occluder2R;
 
 uniform vec3 u_Cam;
 out vec4 outColor;
+
+/* Ray-sphere occlusion: cast a ray from the fragment toward the sun (dir L).
+   In shadow if that ray hits the sphere and the sphere lies between the
+   fragment and the sun. R<=0 disables (an unused occluder slot). */
+bool inShadowOf(vec3 p, vec3 L, vec3 center, float r) {
+  if (r <= 0.0) return false;
+  vec3  oc   = p - center;
+  float b    = dot(oc, L);
+  float c    = dot(oc, oc) - r * r;
+  float disc = b * b - c;
+  return b < 0.0 && c > 0.0 && disc >= 0.0;
+}
 
 void main() {
   vec4 texel = u_TexOn ? texture(u_Tex, v_UV) : vec4(u_Base, 1.0);
@@ -188,19 +191,12 @@ void main() {
 
   float spec = pow(max(dot(N, H), 0.0), shininess);
 
-  /* Saturn occults the sun — analytical ray-sphere shadow test.
-     Cast a ray from the fragment toward the sun (direction L).
-     If it intersects Saturn's sphere (center = origin, radius = u_OccluderR)
-     and the sphere lies between the fragment and the sun, the fragment is in shadow.
-     Ambient is kept so eclipsed regions stay faintly lit by starlight. */
-  float shadowFactor = 1.0;
-  if (u_OccluderR > 0.0) {
-    vec3  oc   = v_Wpos - u_OccluderCenter;
-    float b    = dot(oc, L);
-    float c    = dot(oc, oc) - u_OccluderR * u_OccluderR;
-    float disc = b * b - c;
-    if (b < 0.0 && c > 0.0 && disc >= 0.0) shadowFactor = 0.0;
-  }
+  /* Analytical ray-sphere shadow test against up to two occluders (e.g. the
+     rings are eclipsed by both Saturn's body and Enceladus). Ambient is kept
+     so eclipsed regions stay faintly lit by starlight. */
+  float shadowFactor =
+    (inShadowOf(v_Wpos, L, u_OccluderCenter,  u_OccluderR) ||
+     inShadowOf(v_Wpos, L, u_Occluder2Center, u_Occluder2R)) ? 0.0 : 1.0;
 
   vec3 ambient  = 0.08 * u_LCol * base;
   vec3 diffuse  = diff * shadowFactor * u_LCol * base;

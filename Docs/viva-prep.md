@@ -41,10 +41,10 @@ src/
 2. Load GLB models in parallel:
       /saturn.glb       → Saturn body + rings (+ bundled moons, filtered out)
       /enceladus.glb    → Enceladus moon
-3. Compile all 6 shader programs
-4. Load textures in parallel:
+3. Compile all 5 shader programs
+4. Load the Saturn body texture:
       /8k_saturn.jpg         → Saturn body diffuse
-      /8k_sun.jpg            → Sun sphere texture
+      (the sun is procedural now — no /8k_sun.jpg)
 5. Upload mesh data to GPU (VAOs)
 6. Load cubemap skybox (6 face PNGs)
 7. Create framebuffer render targets (sceneRT, bloomA, bloomB)
@@ -63,8 +63,7 @@ Every frame executes four distinct GPU passes. This is what makes bloom possible
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  PASS 1 — Scene to offscreen FBO (sceneRT)              │
-│    • Skybox (full-screen quad, depth = 0.9999)          │
-│    • Sun sphere (emissive, tone-mapped)                 │
+│    • Skybox + procedural sun disk/halo (full-screen quad)│
 │    • Saturn body (opaque, Phong + env map + fog)        │
 │    • Enceladus   (opaque, Phong + env map + fog)        │
 │    • Saturn rings (transparent, alpha-blended)          │
@@ -96,8 +95,7 @@ The screen framebuffer can only be read/written once per frame. Post-processing 
 
 | Program | Vertex shader | Fragment shader | Purpose |
 |---|---|---|---|
-| `skyProg` | `SKYBOX_VS` | `SKYBOX_FS` | Full-screen quad, unprojected to world ray, samples cubemap |
-| `sunProg` | `SUN_VS` | `SUN_FS` | UV sphere + 8k texture + HDR tone curve |
+| `skyProg` | `SKYBOX_VS` | `SKYBOX_FS` | Full-screen quad, unprojected to world ray, samples cubemap **+ draws the procedural sun disk + halo** |
 | `planetProg` | `PLANET_VS` | `PLANET_FS` | All planets/rings: Phong + env map + fog + gamma |
 | `brightProg` | `POST_VS` | `BRIGHT_FS` | Extract bright regions for bloom |
 | `blurProg` | `POST_VS` | `BLUR_FS` | Single-pass 1D Gaussian blur |
@@ -581,7 +579,9 @@ FBO textures are fixed resolution. On window resize, old targets are deleted and
 
 ## 22. Procedural UV Sphere (geometry.js)
 
-The sun is a procedural sphere (no GLB). Also used to build the sun VAO.
+`makeUvSphere` builds a UV sphere from scratch (no GLB). It used to build the
+sun's VAO; the sun is now a procedural disk in the skybox shader, so this is no
+longer called at runtime, but it stays as a textbook example of the technique.
 
 ```js
 // geometry.js — makeUvSphere(radius, latBands, lonBands)
