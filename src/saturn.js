@@ -215,7 +215,12 @@ async function main() {
         gl.uniform3fv(U.u_Base, m.color); gl.uniform1i(U.u_TexOn, 0);
       }
 
-      if (specTex) {
+      /* The ring's GLB material (saturn2_A) carries a spec-gloss texture, but
+         it's a leftover grayscale rock map with no alpha channel — so it would
+         force shininess = a*255+1 = 256 (a mirror-tight lobe) tinted by cratered
+         noise. On a flat disc that lobe never registers. Ignore it and use the
+         intended broad, soft highlight for the scattered-ice rings instead. */
+      if (specTex && !ring) {
         bindTex(gl, gl.TEXTURE2, gl.TEXTURE_2D, specTex, U.u_SpecTex, 2);
         gl.uniform1i(U.u_SpecTexOn, 1);
       } else {
