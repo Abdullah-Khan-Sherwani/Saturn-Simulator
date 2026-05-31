@@ -74,6 +74,9 @@ export function extractMeshes({ json, bin, images }) {
       const uv   = attrs.TEXCOORD_0 != null
         ? Float32Array.from(readAccessor(json, bin, attrs.TEXCOORD_0))
         : null;
+      const uv2  = attrs.TEXCOORD_1 != null
+        ? Float32Array.from(readAccessor(json, bin, attrs.TEXCOORD_1))
+        : null;
 
       let idx = null, idxType = null;
       if (prim.indices != null) {
@@ -86,6 +89,9 @@ export function extractMeshes({ json, bin, images }) {
       }
 
       let color = [0.8, 0.8, 0.8], opacity = 1.0, image = null, specImage = null;
+      /* KHR_materials_pbrSpecularGlossiness factors (defaults per the spec) and
+         the UV set the spec map is authored against (these assets use UV1). */
+      let specFactor = [1, 1, 1], glossFactor = 1.0, specUV = 0;
 
       if (prim.material != null) {
         const mat   = json.materials[prim.material];
@@ -96,10 +102,14 @@ export function extractMeshes({ json, bin, images }) {
             const [r, g, b, a = 1] = khrSG.diffuseFactor;
             color = [r, g, b]; opacity = a;
           }
+          if (khrSG.specularFactor)        specFactor  = khrSG.specularFactor;
+          if (khrSG.glossinessFactor != null) glossFactor = khrSG.glossinessFactor;
           if (khrSG.diffuseTexture != null)
             image = images[json.textures[khrSG.diffuseTexture.index].source] ?? null;
-          if (khrSG.specularGlossinessTexture != null)
+          if (khrSG.specularGlossinessTexture != null) {
             specImage = images[json.textures[khrSG.specularGlossinessTexture.index].source] ?? null;
+            specUV    = khrSG.specularGlossinessTexture.texCoord ?? 0;
+          }
         } else {
           const pbr = mat.pbrMetallicRoughness ?? {};
           if (pbr.baseColorFactor) {
@@ -112,8 +122,8 @@ export function extractMeshes({ json, bin, images }) {
       }
 
       meshes.push({
-        name: nodeName, pos, norm, uv, idx, idxType,
-        color, opacity, image, specImage,
+        name: nodeName, pos, norm, uv, uv2, idx, idxType,
+        color, opacity, image, specImage, specUV, specFactor, glossFactor,
         uvRepeat: [1, 1], uvOffset: [0, 0],
       });
     }

@@ -87,6 +87,7 @@ export const PLANET_VS = /* glsl */`#version 300 es
 in vec3 a_Pos;
 in vec3 a_Norm;
 in vec2 a_UV;
+in vec2 a_UV2;          // second UV set (TEXCOORD_1) — spec maps are authored against this
 
 uniform mat4 u_MVP;
 uniform mat4 u_M;
@@ -97,12 +98,14 @@ uniform vec2 u_UVOffset;
 out vec3 v_Wpos;
 out vec3 v_Norm;
 out vec2 v_UV;
+out vec2 v_UV2;
 
 void main() {
   vec4 wp = u_M * vec4(a_Pos, 1.0);
   v_Wpos  = wp.xyz;
   v_Norm  = normalize(u_N * a_Norm);
   v_UV    = a_UV * u_UVRepeat + u_UVOffset;
+  v_UV2   = a_UV2;
   gl_Position = u_MVP * vec4(a_Pos, 1.0);
 }`;
 
@@ -118,6 +121,7 @@ precision highp float;
 in vec3 v_Wpos;
 in vec3 v_Norm;
 in vec2 v_UV;
+in vec2 v_UV2;
 
 uniform vec3  u_LDir;
 uniform vec3  u_LCol;
@@ -131,6 +135,9 @@ uniform sampler2D u_Tex;
 uniform float     u_AlphaCutoff;
 uniform bool      u_SpecTexOn;
 uniform sampler2D u_SpecTex;
+uniform float     u_SpecUV;       // which UV set samples the spec map: 0 = v_UV, 1 = v_UV2
+uniform vec3      u_SpecFactor;   // KHR_materials_pbrSpecularGlossiness specularFactor
+uniform float     u_GlossFactor;  // KHR_materials_pbrSpecularGlossiness glossinessFactor
 
 /* Environment Mapping (Advanced 3/5) */
 uniform samplerCube u_EnvMap;
@@ -208,13 +215,18 @@ void main() {
 
   float diff = max(dot(N, L), 0.0);
 
-  /* KHR_materials_pbrSpecularGlossiness: RGB=specular, A=glossiness */
+  /* KHR_materials_pbrSpecularGlossiness: spec map RGB = specular colour,
+     A = glossiness, scaled by the material's specular/glossiness factors. The
+     spec map is sampled with its own authored UV set (u_SpecUV: the body and
+     ring both use TEXCOORD_1, not the diffuse's TEXCOORD_0). Meshes with no spec
+     map fall back to the uniform u_SpecK / u_Shin material parameters. */
   vec3  specCol;
   float shininess;
   if (u_SpecTexOn) {
-    vec4 sg   = texture(u_SpecTex, v_UV);
-    specCol   = sg.rgb;
-    shininess = sg.a * 255.0 + 1.0;
+    vec2 sUV  = (u_SpecUV > 0.5) ? v_UV2 : v_UV;
+    vec4 sg   = texture(u_SpecTex, sUV);
+    specCol   = sg.rgb * u_SpecFactor;
+    shininess = sg.a * u_GlossFactor * 255.0 + 1.0;
   } else {
     specCol   = vec3(u_SpecK);
     shininess = u_Shin;

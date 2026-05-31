@@ -100,7 +100,7 @@ async function main() {
   const U = cacheUniforms(gl, planetProg, [
     'u_MVP','u_M','u_N','u_LDir','u_LCol','u_Base','u_Cam',
     'u_Shin','u_SpecK','u_Alpha','u_TexOn','u_Tex','u_AlphaCutoff',
-    'u_SpecTexOn','u_SpecTex','u_UVRepeat','u_UVOffset',
+    'u_SpecTexOn','u_SpecTex','u_SpecUV','u_SpecFactor','u_GlossFactor','u_UVRepeat','u_UVOffset',
     'u_EnvMap','u_EnvStr','u_FogDensity','u_FogColor','u_OccluderCenter','u_OccluderR',
     'u_Occluder2Center','u_Occluder2R',
     'u_RingShadowOn','u_RingNormal','u_RingCenter','u_RingInner','u_RingOuter',
@@ -215,14 +215,17 @@ async function main() {
         gl.uniform3fv(U.u_Base, m.color); gl.uniform1i(U.u_TexOn, 0);
       }
 
-      /* The ring's GLB material (saturn2_A) carries a spec-gloss texture, but
-         it's a leftover grayscale rock map with no alpha channel — so it would
-         force shininess = a*255+1 = 256 (a mirror-tight lobe) tinted by cratered
-         noise. On a flat disc that lobe never registers. Ignore it and use the
-         intended broad, soft highlight for the scattered-ice rings instead. */
-      if (specTex && !ring) {
+      /* Spec map (body → img1 with UV1; ring saturn2_A → img4 with UV1). RGB is
+         the specular colour, alpha the glossiness, both scaled by the material's
+         specular/glossiness factors and sampled with the map's authored UV set.
+         Meshes without a spec map (saturn2_B, Enceladus) keep the flat u_SpecK /
+         u_Shin fallback. */
+      if (specTex) {
         bindTex(gl, gl.TEXTURE2, gl.TEXTURE_2D, specTex, U.u_SpecTex, 2);
-        gl.uniform1i(U.u_SpecTexOn, 1);
+        gl.uniform1i (U.u_SpecTexOn,  1);
+        gl.uniform1f (U.u_SpecUV,     m.specUV ?? 0);
+        gl.uniform3fv(U.u_SpecFactor, m.specFactor ?? [1, 1, 1]);
+        gl.uniform1f (U.u_GlossFactor, m.glossFactor ?? 1.0);
       } else {
         gl.uniform1i(U.u_SpecTexOn, 0);
         if (ring) { gl.uniform1f(U.u_Shin, 12.0); gl.uniform1f(U.u_SpecK, 0.45); }
