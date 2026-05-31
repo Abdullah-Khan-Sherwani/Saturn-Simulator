@@ -6,7 +6,8 @@
 
 [![WebGL 2.0](https://img.shields.io/badge/WebGL-2.0-blue?logo=webgl)](https://www.khronos.org/webgl/)
 [![GLSL ES](https://img.shields.io/badge/GLSL-ES%203.00-blue)](https://www.khronos.org/opengl/wiki/OpenGL_Shading_Language)
-[![Vite](https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white)](https://vitejs.dev)
+[![Vite](https://img.shields.io/badge/Vite-5.4-646CFF?logo=vite&logoColor=white)](https://vitejs.dev)
+[![gl-matrix](https://img.shields.io/badge/gl--matrix-3.4.4-green)](https://github.com/toji/gl-matrix)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
@@ -31,10 +32,10 @@ Saturn Simulator renders Saturn and its orbiting moon Enceladus in real time usi
 
 ### Rendering Pipeline
 - **Per-fragment Phong shading** — ambient + diffuse + specular with Blinn-Phong half-vector
-- **8K texture mapping** — Saturn body, ring alpha mask, and sun surface
-- **Specular / gloss maps** — `KHR_materials_pbrSpecularGlossiness` (RGB = specular, A = glossiness)
-- **Normal matrix** — correct lighting under non-uniform scale transforms
-- **Hierarchical transforms** — Saturn axial tilt (26.7°), self-rotation, Enceladus orbital mechanics
+- **8K texture mapping** — Saturn body diffuse (8192×4096), ring alpha mask; trilinear + anisotropic filtering
+- **Diffuse and specular maps** — per-object diffuse textures plus specular/gloss maps where available
+- **Normal matrix** — inverse-transpose of model matrix upper-left 3×3 for correct lighting under non-uniform scale
+- **Hierarchical transforms** — Saturn axial tilt (26.7°), self-rotation, Enceladus orbit + inclination + self-rotation
 
 ### Advanced Techniques
 | Technique | Effort | Description |
@@ -45,12 +46,14 @@ Saturn Simulator renders Saturn and its orbiting moon Enceladus in real time usi
 | **Gamma Correction** | 2 / 5 | `pow(max(col, 0.0), vec3(1.0/2.2))` at end of fragment shader |
 | **Combined score** | **11 / 10** | Exceeds requirement (≥ 6, at least one ≥ 3) |
 
-### Additional Features
-- **Analytical inter-body shadows** — ray-sphere occlusion test in the fragment shader; Saturn and Enceladus mutually eclipse each other
-- **Ring alpha blending** — correct depth ordering: opaque body written to depth first, rings drawn with `depthMask(false)` + `polygonOffset`
+### Additional Features (beyond course requirements)
+- **Analytical inter-body shadows** — ray-sphere occlusion test per fragment; Saturn and Enceladus mutually eclipse each other with ambient-only fallback so shadowed regions aren't fully black
+- **Translucent ring shadow** — ray-plane intersection finds where sunlight crosses the ring disc; opacity is looked up radially from the 8K ring-alpha texture, casting the correct banded shadow (Cassini Division visible as a bright stripe) onto Saturn's body and Enceladus
+- **Procedural sun disk + halo** — sun rendered in the skybox fragment shader via `smoothstep` disk + power-law falloff halo; feeds bloom to produce a wide corona without a mesh or texture
+- **Ring alpha blending** — correct depth ordering: opaque bodies written to depth first, rings drawn with `depthMask(false)` so transparent discs don't corrupt the depth buffer
 - **Anisotropic texture filtering** — `EXT_texture_filter_anisotropic` (up to 16×) to eliminate shimmer on oblique ring surfaces
 - **Interactive camera** — orbit-drag (mouse + touch), scroll-to-zoom, `E` key toggles focus between Saturn and Enceladus
-- **Custom GLB parser** — pure JS binary parser; supports both strided buffer views and `KHR_materials_pbrSpecularGlossiness` / PBR Metallic-Roughness material workflows
+- **Custom GLB parser** — pure JS binary parser; reads `POSITION`, `NORMAL`, `TEXCOORD_0`, `TEXCOORD_1`, indices, and embedded images; handles both `KHR_materials_pbrSpecularGlossiness` and PBR Metallic-Roughness workflows
 
 ---
 
@@ -252,8 +255,8 @@ Frame N
 |------|------|
 | [WebGL 2.0](https://www.khronos.org/webgl/) | GPU rasterisation API |
 | [GLSL ES 3.00](https://www.khronos.org/opengl/wiki/OpenGL_Shading_Language) | Shader language |
-| [gl-matrix](https://github.com/toji/gl-matrix) | Vector / matrix math |
-| [Vite 5](https://vitejs.dev) | Dev server + bundler |
+| [gl-matrix 3.4.4](https://github.com/toji/gl-matrix) | Vector / matrix math |
+| [Vite 5.4](https://vitejs.dev) | Dev server + bundler |
 
 ---
 
